@@ -25,15 +25,9 @@ import org.apache.hadoop.io.IntWritable;
 import org.apache.mahout.common.Pair;
 import org.apache.mahout.common.RandomUtils;
 import org.apache.mahout.common.iterator.sequencefile.SequenceFileIterable;
-import org.apache.mahout.math.DenseMatrix;
-import org.apache.mahout.math.DenseVector;
-import org.apache.mahout.math.DistributedRowMatrixWriter;
-import org.apache.mahout.math.Matrix;
-import org.apache.mahout.math.MatrixSlice;
-import org.apache.mahout.math.SequentialAccessSparseVector;
-import org.apache.mahout.math.Vector;
-import org.apache.mahout.math.VectorWritable;
+import org.apache.mahout.math.*;
 import org.apache.mahout.math.function.Functions;
+import org.apache.mahout.math.map.OpenObjectIntHashMap;
 import org.apache.mahout.math.stats.Sampler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,6 +60,7 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
   private static final Logger log = LoggerFactory.getLogger(TopicModel.class);
   
   private final String[] dictionary;
+  private final OpenObjectIntHashMap<String> termIdMap;
   private final Matrix topicTermCounts;
   private final Vector topicSums;
   private final int numTopics;
@@ -127,6 +122,14 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
   public TopicModel(Matrix topicTermCounts, Vector topicSums, double eta, double alpha,
     String[] dictionary, int numThreads, double modelWeight) {
     this.dictionary = dictionary;
+    if(dictionary != null) {
+      termIdMap = new OpenObjectIntHashMap<String>(dictionary.length);
+      for(int i=0; i<dictionary.length; i++) {
+        termIdMap.put(dictionary[i], i);
+      }
+    } else {
+      termIdMap = null;
+    }
     this.topicTermCounts = topicTermCounts;
     this.topicSums = topicSums;
     this.numTopics = topicSums.size();
@@ -270,8 +273,8 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
     // now multiply, term-by-term, by the document, to get the weighted distribution of
     // term-topic pairs from this document.
     Iterator<Vector.Element> it = original.iterateNonZero();
-    Vector.Element e = null;
-    while(it.hasNext() && (e = it.next())!= null && e.index() < numTerms) { // protect vs. big docs
+    while(it.hasNext()) {
+      Vector.Element e = it.next();
       for(int x = 0; x < numTopics; x++) {
         Vector docTopicModelRow = docTopicModel.viewRow(x);
         docTopicModelRow.setQuick(e.index(), docTopicModelRow.getQuick(e.index()) * e.get());
@@ -286,7 +289,7 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
     topics.assign(Functions.mult(1/topics.norm(1)));
   }
 
-  public Vector infer(Vector original, Vector docTopics) {
+  public Vector expectedTermCounts(Vector original, Vector docTopics) {
     Vector pTerm = original.like();
     Iterator<Vector.Element> it = original.iterateNonZero();
     while(it.hasNext()) {
@@ -300,6 +303,27 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
       pTerm.set(term, pA);
     }
     return pTerm;
+  }
+  
+  public Vector infer(Vector original, Vector docTopicPrior, double minRelPerplexityDiff, int maxIters) {
+    Vector docTopic = docTopicPrior.clone();
+    double oldPerplexity;
+    double perplexity = Double.MAX_VALUE;
+    int iter = 0;
+    while(iter++ < maxIters) {
+      oldPerplexity = perplexity;
+      perplexity = perplexity(original, docTopic);
+      trainDocTopicModel(original, docTopic, new SparseRowMatrix(numTopics, numTerms));
+      if(oldPerplexity < perplexity) {
+        log.warn("document inference lead to increasing perplexity after " + iter + " iterations");
+      } else {
+        if(iter > 1 && (oldPerplexity - perplexity) / oldPerplexity < minRelPerplexityDiff) {
+          // converged!
+          break;
+        }
+      }
+    }
+    return docTopic;
   }
 
   public void update(Matrix docTopicCounts) {
@@ -353,8 +377,8 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
 
       // for each term a in document i with non-zero weight
       Iterator<Vector.Element> it = document.iterateNonZero();
-      Vector.Element e = null;
-      while(it.hasNext() && (e = it.next()) != null && e.index() < numTerms) {
+      while(it.hasNext()) {
+        Vector.Element e = it.next();
         int termIndex = e.index();
 
         // calc un-normalized p(topic x | term a, document i)
@@ -371,8 +395,8 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
     double perplexity = 0;
     double norm = docTopics.norm(1) + (docTopics.size() * alpha);
     Iterator<Vector.Element> it = document.iterateNonZero();
-    Vector.Element e = null;
-    while(it.hasNext() && (e = it.next()) != null && e.index() < numTerms) {
+    while(it.hasNext()) {
+      Vector.Element e = it.next();
       int term = e.index();
       double prob = 0;
       for(int x = 0; x < numTopics; x++) {

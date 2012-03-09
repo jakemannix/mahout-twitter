@@ -159,7 +159,7 @@ public class InMemoryCollapsedVariationalBayes0 extends AbstractJob {
 
   private void inferDocuments(double convergence, int maxIter, boolean recalculate) {
     for(int docId = 0; docId < corpusWeights.numRows() ; docId++) {
-      Vector inferredDocument = topicModel.infer(corpusWeights.viewRow(docId),
+      Vector inferredDocument = topicModel.expectedTermCounts(corpusWeights.viewRow(docId),
           docTopicCounts.viewRow(docId));
       // do what now?
     }
@@ -189,7 +189,7 @@ public class InMemoryCollapsedVariationalBayes0 extends AbstractJob {
       return 0;
     } else {
       Vector expectedDocTermCounts =
-          topicModel.infer(corpusWeights.viewRow(docId), docTopicCounts.viewRow(docId));
+          topicModel.expectedTermCounts(corpusWeights.viewRow(docId), docTopicCounts.viewRow(docId));
       double expectedNorm = expectedDocTermCounts.norm(1);
       return expectedDocTermCounts.times(docTermCounts.norm(1)/expectedNorm)
           .minus(docTermCounts).norm(1);
@@ -320,7 +320,7 @@ public class InMemoryCollapsedVariationalBayes0 extends AbstractJob {
     Option reInferDocTopicsOpt = obuilder.withLongName("reInferDocTopics").withRequired(false)
         .withArgument(abuilder.withName("reInferDocTopics").withMinimum(1).withMaximum(1)
         .withDefault("no").create())
-        .withDescription("re-infer p(topic | doc) : [no | randstart | continue]")
+        .withDescription("re-expectedTermCounts p(topic | doc) : [no | randstart | continue]")
         .withShortName("rdt").create();
 
     Option numTrainThreadsOpt = obuilder.withLongName("numTrainThreads").withRequired(false)
