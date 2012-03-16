@@ -16,27 +16,59 @@
  */
 package org.apache.mahout.clustering.lda.cvb;
 
+import com.google.common.collect.Lists;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.Text;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
+import org.apache.mahout.common.Pair;
+import org.apache.mahout.common.iterator.sequencefile.PathType;
+import org.apache.mahout.common.iterator.sequencefile.SequenceFileDirIterable;
 import org.apache.mahout.math.RandomAccessSparseVector;
 import org.apache.mahout.math.Vector;
 import org.apache.mahout.math.map.OpenObjectIntHashMap;
 
 import java.io.IOException;
 import java.io.StringReader;
+import java.util.List;
 
 public class InMemoryDictionaryVectorizer implements DocumentVectorizer {
   private final Analyzer analyzer;
   private final OpenObjectIntHashMap<String> termIdMap;
   private final double[] termWeights;
   
-  public InMemoryDictionaryVectorizer(String[] terms, double[] weights, Analyzer analyzer) {
-    termWeights = weights;
-    termIdMap = new OpenObjectIntHashMap<String>(terms.length);
+  public InMemoryDictionaryVectorizer(Configuration conf, Path dictPath, Path weightPath, Analyzer analyzer) {
+    SequenceFileDirIterable<Text, IntWritable> dictIter = new SequenceFileDirIterable<Text, IntWritable>(dictPath,
+        PathType.GLOB, conf);
+    List<Pair<Integer, String>> dictList = Lists.newArrayList();
+    int max = -1;
+    for(Pair<Text, IntWritable> pair : dictIter) {
+      max = Math.max(max, pair.getSecond().get());
+      dictList.add(Pair.of(pair.getSecond().get(), pair.getFirst().toString()));
+    }
+    String[] dict = new String[max + 1];
+    for(Pair<Integer, String> pair : dictList) {
+      dict[pair.getFirst()] = pair.getSecond();
+    }
+    termIdMap = mapify(dict);
+    this.analyzer = analyzer;
+    this.termWeights = null; // TODO: load from weightPath
+  }
+  
+  private OpenObjectIntHashMap<String> mapify(String[] terms) {
+    OpenObjectIntHashMap<String> termIdMap = new OpenObjectIntHashMap<String>(terms.length);
     for(int i=0; i<terms.length; i++) {
       termIdMap.put(terms[i], i);
     }
+    return termIdMap;
+  }
+  
+  public InMemoryDictionaryVectorizer(String[] terms, double[] weights, Analyzer analyzer) {
+    termWeights = weights;
+    termIdMap = mapify(terms);
     this.analyzer = analyzer;
   }
   
