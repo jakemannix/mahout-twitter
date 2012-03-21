@@ -116,7 +116,7 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
   public TopicModel(Matrix topicTermCounts, double eta, double alpha, String[] dictionary,
       int numThreads, double modelWeight) {
     this(topicTermCounts, viewRowSums(topicTermCounts),
-        eta, alpha, dictionary, numThreads, modelWeight);
+            eta, alpha, dictionary, numThreads, modelWeight);
   }
 
   public TopicModel(Matrix topicTermCounts, Vector topicSums, double eta, double alpha,
@@ -467,6 +467,115 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
   @Override
   public Configuration getConf() {
     return conf;
+  }
+
+  public static final class BuilderException extends Exception {
+    public BuilderException(String message, Throwable cause) {
+      super(message, cause);
+    }
+    public BuilderException(String message) {
+      super(message);
+    }
+  }
+  
+  public static final class Builder {
+    private Configuration conf;
+    private String[] dictionary;
+    private OpenObjectIntHashMap<String> termIdMap;
+    private Matrix topicTermCounts;
+    private Long randomSeed;
+    private int numTopics;
+    private int numTerms;
+    private double eta;
+    private double alpha;
+    private int numThreads;
+    private double modelWeight;
+    private Path[] modelPaths;
+
+    public TopicModel build() throws BuilderException {
+      try {
+        if(conf != null && modelPaths != null) {
+          return new TopicModel(conf, eta, alpha, dictionary, numThreads, modelWeight,
+                                modelPaths);
+        }
+        if(topicTermCounts != null) {
+          return new TopicModel(topicTermCounts, eta, alpha, dictionary, numThreads, modelWeight);
+        }
+        if(randomSeed != null) {
+          return new TopicModel(numTopics, numTerms, eta, alpha, new Random(randomSeed), 
+                                dictionary, numThreads, modelWeight);
+        }
+        if(true) {
+          return new TopicModel(numTopics, numTerms, eta, alpha, dictionary, numThreads, modelWeight);
+        }
+        else {
+          return null; // TODO
+        }
+      } catch (IOException e) {
+        throw new BuilderException("Caught IOException from TopicModel ctor: ", e);
+      }
+    }
+    
+    public Builder() {
+
+    }
+
+    public Builder(CVBConfig config) {
+//      setAlpha(config.getAlpha()).
+    }
+    
+    public Builder setModelWeight(double modelWeight) {
+      this.modelWeight = modelWeight;
+      return this;
+    }
+
+    public Builder setModelPaths(String[] modelPaths) {
+      this.modelPaths = new Path[modelPaths.length];
+      for(int i = 0; i < modelPaths.length; i++) {
+        this.modelPaths[i] = new Path(modelPaths[i]);
+      }
+      return this;
+    }
+
+    public Builder setDictionary(String[] dictionary) {
+      this.dictionary = dictionary;
+      return this;
+    }
+
+    public Builder setTopicTermCounts(Matrix topicTermCounts) {
+      this.topicTermCounts = topicTermCounts;
+      return this;
+    }
+
+    public Builder setNumTopics(int numTopics) {
+      this.numTopics = numTopics;
+      return this;
+    }
+
+    public Builder setNumTerms(int numTerms) {
+      this.numTerms = numTerms;
+      return this;
+    }
+
+    public Builder setEta(double eta) {
+      this.eta = eta;
+      return this;
+    }
+
+    public Builder setAlpha(double alpha) {
+      this.alpha = alpha;
+      return this;
+    }
+
+    public Builder setConf(Configuration conf) {
+      this.conf = conf;
+      return this;
+    }
+
+    public Builder setNumThreads(int numThreads) {
+      this.numThreads = numThreads;
+      return this;
+    }
   }
 
   private final class Updater implements Runnable {
