@@ -285,13 +285,14 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
     for(int x = 0; x < numTopics; x++) {
       it = original.iterateNonZero();
       double norm = 0;
+      Vector.Element e;
       while(it.hasNext() && (e = it.next())!= null && e.index() < numTerms) {
         norm += docTopicModel.get(x, e.index());
       }
       topics.set(x, norm);
     }
     // now renormalize so that sum_x(p(x|doc)) = 1
-    topics.assign(Functions.mult(1/topics.norm(1)));
+    topics.assign(Functions.mult(1.0 / topics.norm(1)));
   }
 
   public Vector expectedTermCounts(Vector original, Vector docTopics) {
