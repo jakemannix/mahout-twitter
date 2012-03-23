@@ -68,6 +68,8 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
   private final double eta;
   private final double alpha;
 
+  private final Vector uniform;
+
   private Configuration conf;
 
   private final Sampler sampler;
@@ -133,6 +135,7 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
     this.topicTermCounts = topicTermCounts;
     this.topicSums = topicSums;
     this.numTopics = topicSums.size();
+    this.uniform = new DenseVector(numTopics).assign(1.0 / numTopics);
     this.numTerms = topicTermCounts.numCols();
     this.eta = eta;
     this.alpha = alpha;
@@ -309,6 +312,10 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
       pTerm.set(term, pA);
     }
     return pTerm;
+  }
+  
+  public Vector infer(Vector original, double minRelPerplexityDiff, int maxIters) {
+    return infer(original, uniform, minRelPerplexityDiff, maxIters);
   }
   
   public Vector infer(Vector original, Vector docTopicPrior, double minRelPerplexityDiff, int maxIters) {
