@@ -17,6 +17,8 @@
 package org.apache.mahout.clustering.lda.cvb;
 
 import com.google.common.collect.Lists;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
+
 import org.apache.hadoop.conf.Configurable;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
@@ -54,12 +56,11 @@ import java.util.concurrent.TimeUnit;
  * {@code awaitTermination()} should be called, which will block until updates have been
  * accumulated.
  */
-public class TopicModel implements Configurable, Iterable<MatrixSlice> {
+public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> {
   private static final Logger log = LoggerFactory.getLogger(TopicModel.class);
   private final String[] dictionary;
   private final Matrix topicTermCounts;
   private final Vector topicSums;
-  private final int numTopics;
   private final int numTerms;
   private final double eta;
   private final double alpha;
@@ -108,10 +109,10 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
 
   public TopicModel(Matrix topicTermCounts, Vector topicSums, double eta, double alpha,
     String[] dictionary, int numThreads, double modelWeight) {
+    super(topicSums.size());
     this.dictionary = dictionary;
     this.topicTermCounts = topicTermCounts;
     this.topicSums = topicSums;
-    this.numTopics = topicSums.size();
     this.numTerms = topicTermCounts.numCols();
     this.eta = eta;
     this.alpha = alpha;
@@ -140,10 +141,6 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
     return numTerms;
   }
 
-  public int getNumTopics() {
-    return numTopics;
-  }
-
   private static Vector viewRowSums(Matrix m) {
     Vector v = new DenseVector(m.numRows());
     for(MatrixSlice slice : m) {
@@ -153,8 +150,10 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
   }
 
   private void initializeThreadPool() {
-    ThreadPoolExecutor threadPool = new ThreadPoolExecutor(numThreads, numThreads, 0, TimeUnit.SECONDS,
-                                                           new ArrayBlockingQueue<Runnable>(numThreads * 10));
+    ThreadPoolExecutor threadPool =
+        new ThreadPoolExecutor(numThreads, numThreads, 0, TimeUnit.SECONDS,
+                               new ArrayBlockingQueue<Runnable>(numThreads * 10),
+                               new ThreadFactoryBuilder().setDaemon(false).build());
     threadPool.allowCoreThreadTimeOut(false);
     for(int i = 0; i < numThreads; i++) {
       updaters[i] = new Updater();
@@ -253,7 +252,11 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
     }
   }
 
-  public void trainDocTopicModel(Vector original, Vector topics, Matrix docTopicModel) {
+  @Override
+  public void trainDocTopicModel(DocTrainingState state) {
+    Vector original = state.getDocument();
+    Vector topics = state.getDocTopics();
+    Matrix docTopicModel = state.getDocTopicModel();
     // first calculate p(topic|term,document) for all terms in original, and all topics,
     // using p(term|topic) and p(topic|doc)
     pTopicGivenTerm(original, topics, docTopicModel);
@@ -298,12 +301,10 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
     return pTerm;
   }
 
-  public Vector infer(Vector original, double minRelPerplexityDiff, int maxIters) {
-    return infer(original, uniform, minRelPerplexityDiff, maxIters);
-  }
-
-  public Vector infer(Vector original, Vector docTopicPrior, double minRelPerplexityDiff, int maxIters) {
-    Vector docTopic = docTopicPrior.clone();
+  @Override
+  public Vector infer(DocTrainingState state, double minRelPerplexityDiff, int maxIters) {
+    Vector docTopic = state.getDocTopics().clone();
+    Vector original = state.getDocument();
     double oldPerplexity;
     double perplexity = Double.MAX_VALUE;
     double relPerplexityDiff = Double.MAX_VALUE;
@@ -311,7 +312,8 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
     for (; iter <= maxIters && relPerplexityDiff > minRelPerplexityDiff; ++iter) {
       oldPerplexity = perplexity;
       perplexity = perplexity(original, docTopic);
-      trainDocTopicModel(original, docTopic, new SparseRowMatrix(numTopics, numTerms));
+      state.setPerplexity(perplexity);
+      trainDocTopicModel(state);
       if (oldPerplexity < perplexity) {
         log.warn("Document inference lead to increasing perplexity after {} iterations", iter);
         break;
@@ -322,9 +324,10 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
     return docTopic;
   }
 
-  public void update(Matrix docTopicCounts) {
+  @Override
+  public void update(DocTrainingState state) {
     for(int x = 0; x < numTopics; x++) {
-      updaters[x % updaters.length].update(x, docTopicCounts.viewRow(x));
+      updaters[x % updaters.length].update(x, state.getDocTopicModel().viewRow(x));
     }
   }
 
@@ -393,6 +396,7 @@ public class TopicModel implements Configurable, Iterable<MatrixSlice> {
   /**
    * sum_x sum_a (c_ai * log(p(x|i) * p(a|x)))
    */
+  @Override
   public double perplexity(Vector document, Vector docTopics) {
     double perplexity = 0;
     double norm = docTopics.norm(1) + (docTopics.size() * alpha);

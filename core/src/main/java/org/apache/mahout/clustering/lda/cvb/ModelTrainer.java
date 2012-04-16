@@ -187,13 +187,12 @@ public class ModelTrainer {
         List<TrainerRunnable> runnables = Lists.newArrayList();
         for(Map.Entry<Vector, Vector> entry : batch.entrySet()) {
           runnables.add(new TrainerRunnable(readModel, null, entry.getKey(),
-              entry.getValue(), new SparseRowMatrix(numTopics, numTerms, true),
-              numDocTopicsIters));
+              entry.getValue(), numDocTopicsIters));
         }
         threadPool.invokeAll(runnables);
         if(update) {
           for(TrainerRunnable runnable : runnables) {
-            writeModel.update(runnable.docTopicModel);
+            writeModel.update(runnable.state);
           }
         }
         break;
@@ -207,8 +206,7 @@ public class ModelTrainer {
     while(true) {
       try {
         workQueue.put(new TrainerRunnable(readModel,
-            update ? writeModel : null, document, docTopicCounts, new SparseRowMatrix(
-            numTopics, numTerms, true), numDocTopicIters));
+            update ? writeModel : null, document, docTopicCounts, numDocTopicIters));
         return;
       } catch (InterruptedException e) {
         log.warn("Interrupted waiting to submit document to work queue: " + document, e);
@@ -219,14 +217,12 @@ public class ModelTrainer {
   public void trainSync(Vector document, Vector docTopicCounts, boolean update,
       int numDocTopicIters) {
     new TrainerRunnable(readModel,
-            update ? writeModel : null, document, docTopicCounts, new SparseRowMatrix(
-            numTopics, numTerms, true), numDocTopicIters).run();
+            update ? writeModel : null, document, docTopicCounts, numDocTopicIters).run();
   }
 
   public double calculatePerplexity(Vector document, Vector docTopicCounts, int numDocTopicIters) {
     TrainerRunnable runner =  new TrainerRunnable(readModel,
-            null, document, docTopicCounts, new SparseRowMatrix(
-            numTopics, numTerms, true), numDocTopicIters);
+            null, document, docTopicCounts, numDocTopicIters);
     return runner.call();
   }
 
@@ -260,18 +256,15 @@ public class ModelTrainer {
   private static class TrainerRunnable implements Runnable, Callable<Double> {
     private final TopicModel readModel;
     private final TopicModel writeModel;
-    private final Vector document;
-    private final Vector docTopics;
-    private final Matrix docTopicModel;
+    private final DocTrainingState state;
     private final int numDocTopicIters;
 
     private TrainerRunnable(TopicModel readModel, TopicModel writeModel, Vector document,
-        Vector docTopics, Matrix docTopicModel, int numDocTopicIters) {
+        Vector docTopics, int numDocTopicIters) {
       this.readModel = readModel;
       this.writeModel = writeModel;
-      this.document = document;
-      this.docTopics = docTopics;
-      this.docTopicModel = docTopicModel;
+      this.state = new DocTrainingState().setDocument(document).setDocTopics(docTopics);
+      state.setDocTopicModel(new SparseRowMatrix(docTopics.size(), document.size(), true));
       this.numDocTopicIters = numDocTopicIters;
     }
 
@@ -279,20 +272,20 @@ public class ModelTrainer {
     public void run() {
       for(int i = 0; i < numDocTopicIters; i++) {
         // synchronous read-only call:
-        readModel.trainDocTopicModel(document, docTopics, docTopicModel);
+        readModel.trainDocTopicModel(state);
       }
       if(writeModel != null) {
         // parallel call which is read-only on the docTopicModel, and write-only on the writeModel
         // this method does not return until all rows of the docTopicModel have been submitted
         // to write work queues
-        writeModel.update(docTopicModel);
+        writeModel.update(state);
       }
     }
 
     @Override
     public Double call() {
       run();
-      return readModel.perplexity(document, docTopics);
+      return readModel.perplexity(state.getDocument(), state.getDocTopics());
     }
   }
 }
