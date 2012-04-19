@@ -25,6 +25,8 @@ import org.apache.hadoop.mapred.Reducer;
 import org.apache.hadoop.mapred.Reporter;
 import org.apache.hadoop.mapred.lib.MultipleOutputs;
 import org.apache.hadoop.mapreduce.Counter;
+import org.apache.mahout.common.Pair;
+import org.apache.mahout.common.RandomUtils;
 import org.apache.mahout.math.DenseMatrix;
 import org.apache.mahout.math.DenseVector;
 import org.apache.mahout.math.Matrix;
@@ -93,11 +95,24 @@ public class PriorTrainingReducer extends MapReduceBase
       if(modelPaths != null && modelPaths.length > 0) {
         readModel = new TopicModel(conf, eta, alpha, null, numUpdateThreads, modelWeight, modelPaths);
       } else {
-        log.info("No model files found, starting with uniform p(term|topic) prior");
-        Matrix m = new DenseMatrix(numTopics, numTerms);
-        m.assign(1.0 / numTerms);
-        readModel = new TopicModel(m, new DenseVector(numTopics).assign(1.0), eta, alpha, null,
-            numTrainThreads, modelWeight);
+        Matrix m;
+        Vector topicSums;
+        if(c.getDocTopicPriorPath() == null) {
+          log.info("No model files found, no p(topic|doc) priors, so randomizing p(term|topic) on "
+                   + c.getRandomSeed() + " as random seed");
+          Pair<Matrix, Vector> p = TopicModelBase.randomMatrix(numTopics, numTerms,
+                                     RandomUtils.getRandom(c.getRandomSeed()));
+          m = p.getFirst();
+          topicSums = p.getSecond();
+        } else {
+          log.info("No model files found, starting with uniform p(term|topic) prior, " +
+                   "taking randomness from the p(topic|doc) priors in " + 
+                   c.getDocTopicPriorPath().toString());
+          m = new DenseMatrix(numTopics, numTerms);
+          m.assign(1.0 / numTerms);
+          topicSums = new DenseVector(numTopics).assign(1.0);
+        }
+        readModel = new TopicModel(m, topicSums, eta, alpha, null, numTrainThreads, modelWeight);
       }
 
       log.info("Initializing write model");
@@ -174,8 +189,8 @@ public class PriorTrainingReducer extends MapReduceBase
     modelTrainer.stop();
 
     log.info("Writing model");
-    TopicModel model = modelTrainer.getReadModel();
-    for(MatrixSlice topic : model) {
+    TopicModelBase model = modelTrainer.getReadModel();
+    for(MatrixSlice topic : model.getTopicTermCounts()) {
       multipleOutputs.getCollector(TOPIC_TERMS, reporter)
                      .collect(new IntWritable(topic.index()), new VectorWritable(topic.vector()));
     }

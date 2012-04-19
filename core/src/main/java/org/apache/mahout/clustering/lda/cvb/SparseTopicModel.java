@@ -71,4 +71,14 @@ public class SparseTopicModel extends TopicModelBase {
   public double perplexity(Vector document, Vector docTopics) {
     return 0;  //To change body of implemented methods use File | Settings | File Templates.
   }
+
+  @Override
+  public Matrix getTopicTermCounts() {
+    return null;  //To change body of implemented methods use File | Settings | File Templates.
+  }
+
+  @Override
+  public Vector expectedTermCounts(Vector original, Vector docTopics) {
+    return null;  //To change body of implemented methods use File | Settings | File Templates.
+  }
 }

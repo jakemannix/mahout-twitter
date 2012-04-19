@@ -120,8 +120,8 @@ public class CachingCVB0Mapper
     modelTrainer.stop();
 
     log.info("Writing model");
-    TopicModel model = modelTrainer.getReadModel();
-    for(MatrixSlice topic : model) {
+    TopicModelBase model = modelTrainer.getReadModel();
+    for(MatrixSlice topic : model.getTopicTermCounts()) {
       context.write(new IntWritable(topic.index()), new VectorWritable(topic.vector()));
     }
   }

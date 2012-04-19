@@ -166,22 +166,6 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
     return topicTermCounts.iterateAll();
   }
 
-  private static Pair<Matrix,Vector> randomMatrix(int numTopics, int numTerms, Random random) {
-    Matrix topicTermCounts = new DenseMatrix(numTopics, numTerms);
-    Vector topicSums = new DenseVector(numTopics);
-    if(random != null) {
-      for(int x = 0; x < numTopics; x++) {
-        for(int term = 0; term < numTerms; term++) {
-          topicTermCounts.viewRow(x).set(term, random.nextDouble());
-        }
-      }
-    }
-    for(int x = 0; x < numTopics; x++) {
-      topicSums.set(x, random == null ? 1.0 : topicTermCounts.viewRow(x).norm(1));
-    }
-    return Pair.of(topicTermCounts, topicSums);
-  }
-
   public static Pair<Matrix, Vector> loadModel(Configuration conf, Path... modelPaths)
       throws IOException {
     int numTopics = -1;
@@ -346,14 +330,6 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
       v.set(termId, v.get(termId) + topicCounts.get(x));
     }
     topicSums.assign(topicCounts, Functions.PLUS);
-  }
-
-  public void persist(Path outputDir, boolean overwrite) throws IOException {
-    FileSystem fs = outputDir.getFileSystem(conf);
-    if(overwrite) {
-      fs.delete(outputDir, true); // CHECK second arg
-    }
-    DistributedRowMatrixWriter.write(outputDir, conf, topicTermCounts);
   }
 
   /**

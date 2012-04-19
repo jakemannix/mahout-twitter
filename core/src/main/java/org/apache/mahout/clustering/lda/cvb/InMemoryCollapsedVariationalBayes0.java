@@ -82,8 +82,8 @@ public class InMemoryCollapsedVariationalBayes0 extends AbstractJob {
   private double initialModelCorpusFraction;
   private Matrix docTopicCounts;
   private long seed;
-  private TopicModel topicModel;
-  private TopicModel updatedModel;
+  private TopicModelBase topicModel;
+  private TopicModelBase updatedModel;
   private int numTrainingThreads;
   private int numUpdatingThreads;
   private ModelTrainer modelTrainer;

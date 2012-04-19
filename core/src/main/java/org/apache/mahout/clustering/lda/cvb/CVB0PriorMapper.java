@@ -43,7 +43,7 @@ import java.util.Random;
 
 public class CVB0PriorMapper extends MapReduceBase implements
     Mapper<IntWritable, TupleWritable, IntWritable, VectorWritable> {
-  private static final Logger log = LoggerFactory.getLogger(CVB0PriorMapper.class);
+  private static final Logger log = LoggerFactory.getLogger("");//CVB0PriorMapper.class);
 
   public static final String DOCTOPIC_OUT = "doc.topic.output";
   private MultipleOutputs multipleOutputs;
@@ -102,21 +102,22 @@ public class CVB0PriorMapper extends MapReduceBase implements
         ? (VectorWritable) tuple.get(1)
         : new VectorWritable(new DenseVector(numTopics).assign(1.0 / numTopics));
 
-    TopicModel model = modelTrainer.getReadModel();
-    Matrix docTopicModel = new SparseRowMatrix(numTopics, document.get().size(), true);
+    TopicModelBase model = modelTrainer.getReadModel();
+    DocTrainingState state = new DocTrainingState().setDocument(document.get())
+                                                   .setDocTopics(docTopicPrior.get());
     // iterate one step on p(topic | doc)
-    model.trainDocTopicModel(document.get(), docTopicPrior.get(), docTopicModel);
-    // update the model
-    model.update(docTopicModel);
+    model.trainDocTopicModel(state);
+    // update the model: NOTE - this is updating the current model, in place (i.e. online learning)
+    model.update(state);
     // emit the updated p(topic | doc)
-    multipleOutputs.getCollector(DOCTOPIC_OUT, reporter).collect(docId, docTopicPrior);
+    multipleOutputs.getCollector(DOCTOPIC_OUT, reporter).collect(docId, state.getDocTopics());
   }
 
   @Override
   public void close() throws IOException {
     modelTrainer.stop();
     // emit the model
-    for(MatrixSlice slice : modelTrainer.getReadModel()) {
+    for(MatrixSlice slice : modelTrainer.getReadModel().getTopicTermCounts()) {
       out.collect(new IntWritable(slice.index()),
           new VectorWritable(slice.vector()));
     }

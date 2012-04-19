@@ -61,14 +61,14 @@ public class ModelTrainer {
 
   private final int numTopics;
   private final int numTerms;
-  private TopicModel readModel;
-  private TopicModel writeModel;
+  private TopicModelBase readModel;
+  private TopicModelBase writeModel;
   private ThreadPoolExecutor threadPool;
   private BlockingQueue<Runnable> workQueue;
   private final int numTrainThreads;
   private final boolean isReadWrite;
 
-  public ModelTrainer(TopicModel initialReadModel, TopicModel initialWriteModel,
+  public ModelTrainer(TopicModelBase initialReadModel, TopicModelBase initialWriteModel,
       int numTrainThreads, int numTopics, int numTerms) {
     this.readModel = initialReadModel;
     this.writeModel = initialWriteModel;
@@ -91,7 +91,7 @@ public class ModelTrainer {
     this(model, model, numTrainThreads, numTopics, numTerms);
   }
 
-  public TopicModel getReadModel() {
+  public TopicModelBase getReadModel() {
     return readModel;
   }
 
@@ -240,7 +240,7 @@ public class ModelTrainer {
       writeModel.awaitTermination();
       newTime = System.nanoTime();
       log.info("writeModel.awaitTermination() took " + (newTime - startTime) / 1.0e6 + "ms");
-      TopicModel tmpModel = writeModel;
+      TopicModelBase tmpModel = writeModel;
       writeModel = readModel;
       readModel = tmpModel;
       writeModel.reset();
@@ -254,12 +254,12 @@ public class ModelTrainer {
   }
 
   private static class TrainerRunnable implements Runnable, Callable<Double> {
-    private final TopicModel readModel;
-    private final TopicModel writeModel;
+    private final TopicModelBase readModel;
+    private final TopicModelBase writeModel;
     private final DocTrainingState state;
     private final int numDocTopicIters;
 
-    private TrainerRunnable(TopicModel readModel, TopicModel writeModel, Vector document,
+    private TrainerRunnable(TopicModelBase readModel, TopicModelBase writeModel, Vector document,
         Vector docTopics, int numDocTopicIters) {
       this.readModel = readModel;
       this.writeModel = writeModel;
