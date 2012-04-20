@@ -28,6 +28,8 @@ import com.google.common.base.Preconditions;
  */
 public class CVBConfig {
   // parameter names
+  public static final String CURRENT_MODEL_WEIGHT = "current_model_weight";
+  public static final String CURRENT_ITERATION_PARAM = "current_iteration";
   public static final String INPUT_PATH_PARAM = DefaultOptionCreator.INPUT_OPTION;
   public static final String DICTIONARY_PATH_PARAM = "dictionary";
   public static final String DOC_TOPIC_PRIOR_PATH_PARAM = "doc_topic_prior_path";
@@ -71,6 +73,8 @@ public class CVBConfig {
   public static final int MAX_INFERENCE_ITERATIONS_PER_DOC_DEFAULT = 100;
 
   // TODO: sensible defaults and/or checks for validity
+  private float currentModelWeight = Float.NaN;
+  private int currentIteration = -1;
   private Path inputPath;
   private Path dictionaryPath;
   private Path docTopicPriorPath;
@@ -96,6 +100,24 @@ public class CVBConfig {
   private float modelWeight = MODEL_WEIGHT_DEFAULT;
   private float minRelPreplexityDiff = MIN_RELATIVE_PERPLEXITY_DIFF_DEFAULT;
   private int maxInferenceItersPerDoc = MAX_INFERENCE_ITERATIONS_PER_DOC_DEFAULT;
+
+  public float getCurrentModelWeight() {
+    return currentModelWeight;
+  }
+
+  public CVBConfig setCurrentModelWeight(float currentModelWeight) {
+    this.currentModelWeight = currentModelWeight;
+    return this;
+  }
+
+  public int getCurrentIteration() {
+    return currentIteration;
+  }
+
+  public CVBConfig setCurrentIteration(int currentIteration) {
+    this.currentIteration = currentIteration;
+    return this;
+  }
 
   public boolean isUseOnlyLabeledDocs() {
     return useOnlyLabeledDocs;
@@ -329,6 +351,8 @@ public class CVBConfig {
   }
 
   public void write(Configuration conf) {
+    conf.setFloat(CURRENT_MODEL_WEIGHT, currentModelWeight);
+    conf.setInt(CURRENT_ITERATION_PARAM, currentIteration);
     conf.setInt(NUM_TOPICS_PARAM, numTopics);
     conf.setInt(NUM_TERMS_PARAM, numTerms);
     conf.setFloat(DOC_TOPIC_SMOOTHING_PARAM, alpha);
@@ -345,6 +369,8 @@ public class CVBConfig {
   }
 
   public CVBConfig read(Configuration conf) {
+    setCurrentModelWeight(conf.getFloat(CURRENT_MODEL_WEIGHT, Float.NaN));
+    setCurrentIteration(conf.getInt(CURRENT_ITERATION_PARAM, 0));
     setNumTopics(conf.getInt(NUM_TOPICS_PARAM, 0));
     setNumTerms(conf.getInt(NUM_TERMS_PARAM, 0));
     setAlpha(conf.getFloat(DOC_TOPIC_SMOOTHING_PARAM, 0));
@@ -363,6 +389,9 @@ public class CVBConfig {
   }
 
   public void check() {
+   // initially will be NaN, but should be set positive after perplexity has been checked.
+   // checkPositive(CURRENT_MODEL_WEIGHT, currentModelWeight);
+    checkPositive(CURRENT_ITERATION_PARAM, currentIteration);
     checkPositive(NUM_TOPICS_PARAM, numTopics);
     checkPositive(NUM_TERMS_PARAM, numTerms);
     checkGreater(NUM_TERMS_PARAM, numTerms, numTopics);

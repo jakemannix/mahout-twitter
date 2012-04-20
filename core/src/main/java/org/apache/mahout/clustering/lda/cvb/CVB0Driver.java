@@ -47,11 +47,13 @@ import org.apache.hadoop.util.ToolRunner;
 import org.apache.mahout.common.AbstractJob;
 import org.apache.mahout.common.HadoopUtil;
 import org.apache.mahout.common.Pair;
+import org.apache.mahout.common.RandomUtils;
 import org.apache.mahout.common.commandline.DefaultOptionCreator;
 import org.apache.mahout.common.iterator.sequencefile.PathFilters;
 import org.apache.mahout.common.iterator.sequencefile.PathType;
 import org.apache.mahout.common.iterator.sequencefile.SequenceFileDirIterable;
 import org.apache.mahout.common.mapreduce.VectorSumReducer;
+import org.apache.mahout.math.Matrix;
 import org.apache.mahout.math.VectorWritable;
 import org.apache.mahout.vectorizer.SparseVectorsFromSequenceFiles;
 import org.slf4j.Logger;
@@ -255,6 +257,12 @@ public class CVB0Driver extends AbstractJob {
 
      // determine what the "current" iteration is (the iteration for which no data yet exists)
      int currentIteration = getCurrentIterationNumber(conf, c.getModelTempPath(), c.getMaxIterations());
+     c.setCurrentIteration(currentIteration);
+
+     if(currentIteration == 1) {
+       writeInitialTopicModel(conf, c, modelPath(c.getModelTempPath(), 0));
+     }
+
      log.info("Current iteration number: {}", currentIteration);
      c.write(conf);
 
@@ -328,6 +336,16 @@ public class CVB0Driver extends AbstractJob {
       return -1;
     }
     return 0;
+  }
+
+  private static void writeInitialTopicModel(Configuration conf, CVBConfig c, Path path)
+      throws IOException {
+    TopicModelBase topicModel = new TopicModel(c.getNumTopics(), c.getNumTerms(), c.getEta(),
+                                               c.getAlpha(),
+                                               RandomUtils.getRandom(c.getRandomSeed()),
+                                               null, c.getNumTrainThreads(), c.getModelWeight());
+    topicModel.setConf(conf);
+    topicModel.persist(new Path(path, "part-r-00000"), true);
   }
 
   private static double rateOfChange(List<Double> perplexities) {
@@ -509,6 +527,7 @@ public class CVB0Driver extends AbstractJob {
 
   public static void runIteration(Configuration conf, CVBConfig c, int iterationNumber) throws IOException,
       ClassNotFoundException, InterruptedException {
+    c.setCurrentIteration(iterationNumber);
     if(c.isPersistDocTopics() || c.getDocTopicPriorPath() != null) {
       runIterationWithDocTopicPriors(conf, c, iterationNumber);
     } else {
@@ -648,20 +667,36 @@ public class CVB0Driver extends AbstractJob {
   }
 
   private static void setModelPaths(Configuration conf, Path modelPath) throws IOException {
+    conf.setStrings(MODEL_PATHS, getModelPaths(conf, modelPath));
+  }
+  
+  public static String[] getModelPaths(Configuration conf, Path modelPath) throws IOException {
+    Path[] modelSubPaths = getModelSubPaths(conf, modelPath);
+    if (modelSubPaths == null || modelSubPaths.length == 0) {
+      return null;
+    }
+    String[] modelPaths = new String[modelSubPaths.length];
+    for (int i = 0; i < modelSubPaths.length; i++) {
+      modelPaths[i] = modelSubPaths[i].toUri().toString();
+    }
+    return modelPaths;
+  }
+  
+  public static Path[] getModelSubPaths(Configuration conf, Path modelPath) throws IOException {
     if (modelPath == null) {
-      return;
+      return null;
     }
     FileSystem fs = FileSystem.get(modelPath.toUri(), conf);
     if (!fs.exists(modelPath)) {
-      return;
+      return null;
     }
     FileStatus[] statuses = fs.listStatus(modelPath, PathFilters.partFilter());
     Preconditions.checkState(statuses.length > 0, "No part files found in model path '%s'", modelPath.toString());
-    String[] modelPaths = new String[statuses.length];
+    Path[] modelSubPaths = new Path[statuses.length];
     for (int i = 0; i < statuses.length; i++) {
-      modelPaths[i] = statuses[i].getPath().toUri().toString();
+      modelSubPaths[i] = statuses[i].getPath();
     }
-    conf.setStrings(MODEL_PATHS, modelPaths);
+    return modelSubPaths;   
   }
 
   public static Path getIntermediateModelPath(int iterationNumber, Path topicModelStateTempPath) {
@@ -686,6 +721,19 @@ public class CVB0Driver extends AbstractJob {
       modelPaths[i] = new Path(modelPathNames[i]);
     }
     return modelPaths;
+  }
+  
+  public static Path[] getPreviousIterationModelPaths(Configuration conf) throws IOException {
+    Path[] modelPaths = getModelPaths(conf);
+    if (modelPaths != null && modelPaths.length > 0) {
+      Path base = modelPaths[0].getParent();
+      int prevIter = conf.getInt(CVBConfig.CURRENT_ITERATION_PARAM, 0) - 1;
+      if (prevIter > 0) {
+        Path prevIterModelPath = modelPath(base, prevIter);
+        return getModelSubPaths(conf, prevIterModelPath);
+      }
+    }
+    return null;
   }
 
   public static void main(String[] args) throws Exception {

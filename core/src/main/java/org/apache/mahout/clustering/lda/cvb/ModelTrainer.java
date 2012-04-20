@@ -240,10 +240,12 @@ public class ModelTrainer {
       writeModel.awaitTermination();
       newTime = System.nanoTime();
       log.info("writeModel.awaitTermination() took " + (newTime - startTime) / 1.0e6 + "ms");
-      TopicModelBase tmpModel = writeModel;
-      writeModel = readModel;
-      readModel = tmpModel;
-      writeModel.reset();
+      if(readModel != writeModel) {
+        TopicModelBase tmpModel = writeModel;
+        writeModel = readModel;
+        readModel = tmpModel;
+        writeModel.reset();
+      }
     } catch (InterruptedException e) {
       log.error("Interrupted shutting down!", e);
     }

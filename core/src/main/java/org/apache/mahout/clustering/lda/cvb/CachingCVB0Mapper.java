@@ -20,8 +20,10 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.mapreduce.Mapper;
+import org.apache.mahout.common.Pair;
 import org.apache.mahout.common.RandomUtils;
 import org.apache.mahout.math.DenseVector;
+import org.apache.mahout.math.Matrix;
 import org.apache.mahout.math.MatrixSlice;
 import org.apache.mahout.math.Vector;
 import org.apache.mahout.math.VectorWritable;
@@ -84,6 +86,14 @@ public class CachingCVB0Mapper
     TopicModel readModel;
     Path[] modelPaths = CVB0Driver.getModelPaths(conf);
     if(modelPaths != null && modelPaths.length > 0) {
+      //Pair<Matrix, Vector> ttc = TopicModelBase.loadModel(conf, modelPaths);
+
+      Path[] prevIterModelPath = CVB0Driver.getPreviousIterationModelPaths(conf);
+      if (prevIterModelPath != null) {
+        // Pair<Matrix, Vector> prevTtc = TopicModelBase.loadModel(conf, prevIterModelPath);
+        // TODO: subtract previousTtc * numShards from current to get just the updates.
+      }
+      
       readModel = new TopicModel(conf, eta, alpha, null, numUpdateThreads, modelWeight, modelPaths);
     } else {
       log.info("No model files found");
@@ -92,6 +102,7 @@ public class CachingCVB0Mapper
     }
 
     log.info("Initializing write model");
+    // TODO: using "modelWeight == 1" as the switch here is BAD. Online LDA with modelWeight 1 is ok
     TopicModel writeModel = modelWeight == 1
         ? new TopicModel(numTopics, numTerms, eta, alpha, null, numUpdateThreads)
         : readModel;

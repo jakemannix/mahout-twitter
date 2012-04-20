@@ -33,6 +33,7 @@ import org.apache.mahout.math.MatrixUtils;
 import org.apache.mahout.math.Vector;
 import org.apache.mahout.math.function.DoubleFunction;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -111,52 +112,28 @@ public class TestCVBModelTrainer extends MahoutTestCase {
     System.out.println(Joiner.on(",").join(perplexities));
   }
 
-  @Test
-  public void testRandomStructuredModelViaMR() throws Exception {
-    int numIterations = 10;
-    List<Double> perplexities = Lists.newArrayList();
-    int startTopic = numGeneratingTopics - 1;
-    int numTestTopics = startTopic;
-    while(numTestTopics < numGeneratingTopics + 2) {
-      Path topicModelStateTempPath = getTestTempDirPath("topicTemp" + numTestTopics);
-      Configuration conf = new Configuration();
-      CVBConfig cvbConfig = new CVBConfig().setAlpha(ALPHA).setEta(ETA).setNumTopics(numTestTopics)
-          .setBackfillPerplexity(false).setConvergenceDelta(0).setDictionaryPath(null)
-          .setModelTempPath(topicModelStateTempPath).setTestFraction(0.2f).setNumTerms(numTerms)
-          .setMaxIterations(numIterations).setInputPath(sampleCorpusPath).setNumTrainThreads(1)
-          .setNumUpdateThreads(1).setIterationBlockSize(1);
-      CVB0Driver.run(conf, cvbConfig);
-      perplexities.add(lowestPerplexity(conf, topicModelStateTempPath));
-      numTestTopics++;
-    }
-    int bestTopic = -1;
-    double lowestPerplexity = Double.MAX_VALUE;
-    for(int t = 0; t < perplexities.size(); t++) {
-      if(perplexities.get(t) < lowestPerplexity) {
-        lowestPerplexity = perplexities.get(t);
-        bestTopic = t + startTopic;
-      }
-    }
-    assertEquals("The optimal number of topics is not that of the generating distribution",
-        numGeneratingTopics, bestTopic);
-    System.out.println("Perplexities: " + Joiner.on(", ").join(perplexities));
+
+  private void runEndToEndMRTest(CVBConfig cvbConfig) throws Exception {
+    runEndToEndMRTest(cvbConfig, 1, 1);
   }
 
-
-  @Test
-  public void testRandomStructuredModelWithDocTopicPriorPersistence() throws Exception {
-    int numIterations = 20;
+  /**
+   *
+   * @param cvbConfig the training configuration
+   * @param numSmallerTopics start at numGeneratingTopics - this number
+   * @param numLargerTopics end at numGeneratingTopics + this number
+   * @throws Exception usually IOException
+   */
+  private void runEndToEndMRTest(CVBConfig cvbConfig,
+                                 int numSmallerTopics,
+                                 int numLargerTopics) throws Exception {
     List<Double> perplexities = Lists.newArrayList();
-    int startTopic = numGeneratingTopics - 1;
+    int startTopic = numGeneratingTopics - numSmallerTopics;
     int numTestTopics = startTopic;
-    while(numTestTopics < numGeneratingTopics + 2) {
+    while(numTestTopics <= numGeneratingTopics + numLargerTopics) {
       Path topicModelStateTempPath = getTestTempDirPath("topicTemp" + numTestTopics);
       Configuration conf = new Configuration();
-      CVBConfig cvbConfig = new CVBConfig().setAlpha(ALPHA).setEta(ETA).setNumTopics(numTestTopics)
-                                .setBackfillPerplexity(false).setConvergenceDelta(0).setDictionaryPath(null)
-                                .setModelTempPath(topicModelStateTempPath).setTestFraction(0.2f).setNumTerms(numTerms)
-                                .setMaxIterations(numIterations).setInputPath(sampleCorpusPath).setNumTrainThreads(1)
-                                .setNumUpdateThreads(1).setIterationBlockSize(1).setPersistDocTopics(true);
+      cvbConfig.setModelTempPath(topicModelStateTempPath).setNumTopics(numTestTopics);
       CVB0Driver.run(conf, cvbConfig);
       perplexities.add(lowestPerplexity(conf, topicModelStateTempPath));
       numTestTopics++;
@@ -174,6 +151,38 @@ public class TestCVBModelTrainer extends MahoutTestCase {
     System.out.println("Perplexities: " + Joiner.on(", ").join(perplexities));
   }
 
+  @Test
+  public void testRandomStructuredModelViaMR() throws Exception {
+    int numIterations = 10;
+    CVBConfig cvbConfig = defaultConfig().setMaxIterations(numIterations);
+    runEndToEndMRTest(cvbConfig);
+  }
+
+
+  @Test
+  public void testRandomStructuredModelWithDocTopicPriorPersistence() throws Exception {
+    int numIterations = 20;
+    CVBConfig cvbConfig = defaultConfig().setPersistDocTopics(true).setMaxIterations(numIterations);
+    runEndToEndMRTest(cvbConfig);
+  }
+
+  @Test
+  @Ignore("Online LDA currently not working quite right")
+  public void testModelWeightNotEqualToOne() throws Exception {
+    int numIterations = 20;
+    CVBConfig cvbConfig = defaultConfig().setModelWeight(1.1f)
+                                         .setMaxIterations(numIterations);
+    runEndToEndMRTest(cvbConfig);
+  }
+
+
+  private CVBConfig defaultConfig() {
+    return new CVBConfig().setAlpha(ALPHA).setEta(ETA)
+               .setBackfillPerplexity(false).setConvergenceDelta(0).setDictionaryPath(null)
+               .setTestFraction(0.2f).setNumTerms(numTerms)
+               .setInputPath(sampleCorpusPath).setNumTrainThreads(1)
+               .setNumUpdateThreads(1).setIterationBlockSize(1);
+  }
 
   @Test
   public void testPriorDocTopics() throws Exception {

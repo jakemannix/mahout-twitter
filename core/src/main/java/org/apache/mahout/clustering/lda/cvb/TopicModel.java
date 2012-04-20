@@ -68,7 +68,6 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
   private final Sampler sampler;
   private final int numThreads;
   private final Updater[] updaters;
-  private Configuration conf;
 
   public TopicModel(int numTopics, int numTerms, double eta, double alpha, String[] dictionary,
       double modelWeight) {
@@ -78,6 +77,7 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
   public TopicModel(Configuration conf, double eta, double alpha,
       String[] dictionary, int numThreads, double modelWeight, Path... modelpath) throws IOException {
     this(loadModel(conf, modelpath), eta, alpha, dictionary, numThreads, modelWeight);
+    setConf(conf);
   }
 
   public TopicModel(int numTopics, int numTerms, double eta, double alpha, String[] dictionary,
@@ -88,7 +88,8 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
 
   public TopicModel(int numTopics, int numTerms, double eta, double alpha, Random random,
       String[] dictionary, int numThreads, double modelWeight) {
-    this(randomMatrix(numTopics, numTerms, random), eta, alpha, dictionary, numThreads, modelWeight);
+    this(randomMatrix(numTopics, numTerms, modelWeight, random),
+         eta, alpha, dictionary, numThreads, modelWeight);
   }
 
   private TopicModel(Pair<Matrix, Vector> model, double eta, double alpha, String[] dict,
@@ -164,34 +165,6 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
   @Override
   public Iterator<MatrixSlice> iterator() {
     return topicTermCounts.iterateAll();
-  }
-
-  public static Pair<Matrix, Vector> loadModel(Configuration conf, Path... modelPaths)
-      throws IOException {
-    int numTopics = -1;
-    int numTerms = -1;
-    List<Pair<Integer, Vector>> rows = Lists.newArrayList();
-    for(Path modelPath : modelPaths) {
-      for(Pair<IntWritable, VectorWritable> row :
-          new SequenceFileIterable<IntWritable, VectorWritable>(modelPath, true, conf)) {
-        rows.add(Pair.of(row.getFirst().get(), row.getSecond().get()));
-        numTopics = Math.max(numTopics, row.getFirst().get());
-        if(numTerms < 0) {
-          numTerms = row.getSecond().get().size();
-        }
-      }
-    }
-    if(rows.isEmpty()) {
-      throw new IOException(Arrays.toString(modelPaths) + " have no vectors in it");
-    }
-    numTopics++;
-    Matrix model = new DenseMatrix(numTopics, numTerms);
-    Vector topicSums = new DenseVector(numTopics);
-    for(Pair<Integer, Vector> pair : rows) {
-      model.viewRow(pair.getFirst()).assign(pair.getSecond());
-      topicSums.set(pair.getFirst(), pair.getSecond().norm(1));
-    }
-    return Pair.of(model, topicSums);
   }
 
   // NOTE: this is purely for debug purposes.  It is not performant to "toString()" a real model
@@ -443,16 +416,6 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
       bldr.setCharAt(bldr.length() - 1, '}');
     }
     return bldr.toString();
-  }
-
-  @Override
-  public void setConf(Configuration configuration) {
-    this.conf = configuration;
-  }
-
-  @Override
-  public Configuration getConf() {
-    return conf;
   }
 
   private final class Updater implements Runnable {
