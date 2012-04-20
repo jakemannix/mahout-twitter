@@ -259,7 +259,9 @@ public class CVB0Driver extends AbstractJob {
      int currentIteration = getCurrentIterationNumber(conf, c.getModelTempPath(), c.getMaxIterations());
      c.setCurrentIteration(currentIteration);
 
-     if(currentIteration == 1) {
+     // if it's the first iteration, and there are no document priors, then write the initial
+     // randomized model to HDFS for use in all the first iteration mappers.
+     if(currentIteration == 1 && c.getDocTopicPriorPath() != null) {
        writeInitialTopicModel(conf, c, modelPath(c.getModelTempPath(), 0));
      }
 
