@@ -69,11 +69,6 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
   private final int numThreads;
   private final Updater[] updaters;
 
-  public TopicModel(int numTopics, int numTerms, double eta, double alpha, String[] dictionary,
-      double modelWeight) {
-    this(numTopics, numTerms, eta, alpha, null, dictionary, 1, modelWeight);
-  }
-
   public TopicModel(Configuration conf, double eta, double alpha,
       String[] dictionary, int numThreads, double modelWeight, Path... modelpath) throws IOException {
     this(loadModel(conf, modelpath), eta, alpha, dictionary, numThreads, modelWeight);
@@ -84,12 +79,6 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
       int numThreads, double modelWeight) {
     this(new DenseMatrix(numTopics, numTerms), new DenseVector(numTopics), eta, alpha, dictionary,
         numThreads, modelWeight);
-  }
-
-  public TopicModel(int numTopics, int numTerms, double eta, double alpha, Random random,
-      String[] dictionary, int numThreads, double modelWeight) {
-    this(randomMatrix(numTopics, numTerms, modelWeight, random),
-         eta, alpha, dictionary, numThreads, modelWeight);
   }
 
   private TopicModel(Pair<Matrix, Vector> model, double eta, double alpha, String[] dict,

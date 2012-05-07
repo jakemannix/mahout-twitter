@@ -18,10 +18,13 @@ package org.apache.mahout.clustering.lda.cvb;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.mapreduce.Mapper;
+import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.mahout.common.Pair;
 import org.apache.mahout.common.RandomUtils;
+import org.apache.mahout.common.iterator.sequencefile.SequenceFileIterable;
 import org.apache.mahout.math.DenseVector;
 import org.apache.mahout.math.Matrix;
 import org.apache.mahout.math.MatrixSlice;
@@ -32,6 +35,8 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.Random;
+
+import com.google.common.base.Preconditions;
 
 /**
  * Run ensemble learning via loading the {@link ModelTrainer} with two {@link TopicModel} instances:
@@ -62,8 +67,7 @@ public class CachingCVB0Mapper
   protected ModelTrainer modelTrainer;
   protected int maxIters;
   protected int numTopics;
-  protected float testFraction;
-  protected Random random;
+  protected VectorSparsifier sparsifier;
 
   @Override
   protected void setup(Context context) throws IOException, InterruptedException {
@@ -72,20 +76,34 @@ public class CachingCVB0Mapper
     config = new CVBConfig().read(conf);
     float eta = config.getEta();
     float alpha = config.getAlpha();
-    long seed = config.getRandomSeed();
     numTopics = config.getNumTopics();
     int numTerms = config.getNumTerms();
     int numUpdateThreads = config.getNumUpdateThreads();
     int numTrainThreads = config.getNumTrainThreads();
     maxIters = config.getMaxItersPerDoc();
     float modelWeight = config.getModelWeight();
-    testFraction = config.getTestFraction();
-    random = RandomUtils.getRandom(seed);
+
+    if (config.getCollectionFrequencyPath() != null) {
+      Class<? extends VectorSparsifier> sparsifierClass = BackgroundFrequencyVectorSparsifier.class;
+/*          context.getConfiguration().getClass(SparsifyingVectorSumReducer.SPARSIFIER_CLASS,
+                                             NoopVectorSparsifier.class,
+                                             VectorSparsifier.class); */
+      sparsifier = ReflectionUtils.newInstance(sparsifierClass, context.getConfiguration());
+      sparsifier.setConf(conf);
+    }
 
     log.info("Initializing read model");
     TopicModel readModel;
     Path[] modelPaths = CVB0Driver.getModelPaths(conf);
+
     if(modelPaths != null && modelPaths.length > 0) {
+      Pair<Matrix, Vector> matrix = TopicModelBase.loadModel(conf, modelPaths);
+      Matrix modelMatrix = matrix.getFirst();
+
+      if (sparsifier != null) {
+        modelMatrix = sparsifier.rebalance(modelMatrix);
+      }
+
       //Pair<Matrix, Vector> ttc = TopicModelBase.loadModel(conf, modelPaths);
 
       Path[] prevIterModelPath = CVB0Driver.getPreviousIterationModelPaths(conf);
@@ -94,17 +112,16 @@ public class CachingCVB0Mapper
         // TODO: subtract previousTtc * numShards from current to get just the updates.
       }
       
-      readModel = new TopicModel(conf, eta, alpha, null, numUpdateThreads, modelWeight, modelPaths);
+      readModel = new TopicModel(modelMatrix, eta, alpha, null, numUpdateThreads, modelWeight);
     } else {
       log.info("No model files found");
-      readModel = new TopicModel(numTopics, numTerms, eta, alpha, RandomUtils.getRandom(seed), null,
-          numTrainThreads, modelWeight);
+      throw new IOException("No model files found, must pre-initialize model somehow");
     }
 
     log.info("Initializing write model");
     // TODO: using "modelWeight == 1" as the switch here is BAD. Online LDA with modelWeight 1 is ok
     TopicModel writeModel = modelWeight == 1
-        ? new TopicModel(numTopics, numTerms, eta, alpha, null, numUpdateThreads)
+        ? new TopicModel(numTopics, numTerms, eta, alpha, null, numUpdateThreads, 1)
         : readModel;
 
     log.info("Initializing model trainer");
@@ -114,12 +131,7 @@ public class CachingCVB0Mapper
 
   @Override
   public void map(IntWritable docId, VectorWritable document, Context context)
-      throws IOException, InterruptedException{
-    /* where to get docTopics? */
-    if (0 < testFraction && random.nextFloat() < testFraction) {
-      // don't train on test doc
-      return;
-    }
+      throws IOException, InterruptedException {
     context.getCounter(CVB0Driver.Counters.SAMPLED_DOCUMENTS).increment(1);
     Vector topicVector = new DenseVector(new double[numTopics]).assign(1.0 / numTopics);
     modelTrainer.train(document.get(), topicVector, true, maxIters);

@@ -111,6 +111,16 @@ public class SequentialAccessSparseVector extends AbstractVector {
     values = other.values.clone();
   }
 
+  /**
+   * TODO (FIXME) : This constructor does not work.  It in fact fails entirely, it appears!
+   * @param cardinality
+   * @param indexes
+   * @param values
+   */
+  public SequentialAccessSparseVector(int cardinality, int[] indexes, double[] values) {
+    this(cardinality, new OrderedIntDoubleMapping(indexes, values, indexes.length));
+  }
+
   private SequentialAccessSparseVector(int cardinality, OrderedIntDoubleMapping values) {
     super(cardinality);
     this.values = values;

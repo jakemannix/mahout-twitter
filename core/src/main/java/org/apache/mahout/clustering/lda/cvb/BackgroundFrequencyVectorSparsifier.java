@@ -1,0 +1,108 @@
+package org.apache.mahout.clustering.lda.cvb;
+
+import com.google.common.base.Preconditions;
+
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.conf.Configured;
+import org.apache.hadoop.io.DoubleWritable;
+import org.apache.hadoop.io.IntWritable;
+import org.apache.mahout.common.Pair;
+import org.apache.mahout.common.iterator.sequencefile.SequenceFileIterable;
+import org.apache.mahout.math.DenseVector;
+import org.apache.mahout.math.Matrix;
+import org.apache.mahout.math.RandomAccessSparseVector;
+import org.apache.mahout.math.SequentialAccessSparseVector;
+import org.apache.mahout.math.Vector;
+import org.apache.mahout.math.list.DoubleArrayList;
+import org.apache.mahout.math.list.IntArrayList;
+
+public class BackgroundFrequencyVectorSparsifier extends Configured implements VectorSparsifier {
+  private float minCfRatio = Float.NaN;
+  private double[] collectionFrequencies = null;
+  private double corpusWeight = -1;
+
+  public BackgroundFrequencyVectorSparsifier() {
+  }
+  
+  public BackgroundFrequencyVectorSparsifier(Vector collectionFreqsVector, float minCfRatio) {
+    setCollectionFrequencies(collectionFreqsVector);
+    setMinCfRatio(minCfRatio);
+  }
+  
+  public BackgroundFrequencyVectorSparsifier(double[] collectionFrequencies, float minCfRatio) {
+    this(new DenseVector(collectionFrequencies), minCfRatio);
+  }
+  
+  private void setMinCfRatio(float minCfRatio) {
+    this.minCfRatio = minCfRatio;
+  }
+  
+  private void setCollectionFrequencies(Vector collectionFreqsVector) {
+    collectionFrequencies = new double[collectionFreqsVector.size()];
+    for (int i = 0; i < collectionFreqsVector.size(); i++) {
+      collectionFrequencies[i] = collectionFreqsVector.get(i);
+      corpusWeight += collectionFrequencies[i];
+    }
+  }
+  
+  @Override
+  public void setConf(Configuration conf) {
+    super.setConf(conf);
+    if (conf == null || !Float.isNaN(minCfRatio)) {
+      return;
+    }
+    CVBConfig config = new CVBConfig().read(conf);
+    minCfRatio = config.getCfSparsificationThreshold();
+    SequenceFileIterable<IntWritable, DoubleWritable> cfIterator =
+        new SequenceFileIterable<IntWritable, DoubleWritable>(config.getCollectionFrequencyPath(), conf);
+    double[] collectionFrequencies = new double[config.getNumTerms()];
+    for(Pair<IntWritable, DoubleWritable> cfPair : cfIterator) {
+      collectionFrequencies[cfPair.getFirst().get()] = cfPair.getSecond().get();
+    }
+    setCollectionFrequencies(new DenseVector(collectionFrequencies));
+  }
+  
+  @Override
+  public Vector sparsify(Vector input) {
+
+    Vector output = new RandomAccessSparseVector(input.size());
+
+    IntArrayList indexes = new IntArrayList(11);
+    DoubleArrayList values = new DoubleArrayList(11);
+    double mult = minCfRatio * input.norm(1) / corpusWeight;
+    for(int i = 0; i < collectionFrequencies.length; i++) {
+      if(input.get(i) > collectionFrequencies[i] * mult) {
+        indexes.add(i);
+        values.add(input.get(i));
+        output.set(i, input.get(i));
+      }
+    }
+//    return input;
+//    return output;
+    return new SequentialAccessSparseVector(output);
+  }
+
+  @Override
+  public Matrix rebalance(Matrix modelMatrix) {
+    Preconditions.checkState(collectionFrequencies == null
+                             || collectionFrequencies.length == modelMatrix.columnSize(),
+                             "Collection frequency array not equal to feature width of the model!");
+    for(int feature = 0; feature < collectionFrequencies.length; feature++) {
+      double modelFeatureWeight = 0;
+      double collectionFrequency = collectionFrequencies[feature];
+      for(int topic = 0; topic < modelMatrix.rowSize(); topic++) {
+        modelFeatureWeight += modelMatrix.get(topic, feature);
+      }
+      Preconditions.checkState(modelFeatureWeight > 0,
+                               "feature " + feature + " has zero weight in model!");
+      double mult = collectionFrequency / modelFeatureWeight;
+      for(int topic = 0; topic < modelMatrix.rowSize(); topic++) {
+        double oldVal = modelMatrix.get(topic, feature);
+        if(oldVal != 0) {
+          modelMatrix.set(topic, feature, oldVal * mult);
+        }
+      }
+    }
+    return modelMatrix;
+  }
+}

@@ -552,8 +552,8 @@ public abstract class AbstractVector implements Vector {
       throw new CardinalityException(size, other.size());
     }
 
-    /* special case: we only need to iterate over the non-zero elements of the vector to add */
-    if (Functions.PLUS.equals(function)) {
+    /* special case: only need to iterate over non-zero elements of the vector to add/subtract */
+    if (Functions.PLUS.equals(function) || Functions.MINUS.equals(function)) {
       Iterator<Vector.Element> nonZeroElements = other.iterateNonZero();
       while (nonZeroElements.hasNext()) {
         Vector.Element e = nonZeroElements.next();

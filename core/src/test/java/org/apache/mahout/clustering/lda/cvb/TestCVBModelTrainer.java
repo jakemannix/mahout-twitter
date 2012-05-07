@@ -48,12 +48,16 @@ public class TestCVBModelTrainer extends MahoutTestCase {
   private String[] terms;
   private Matrix matrix;
   private Matrix sampledCorpus;
+  private Vector collectionFrequencies;
   private int numGeneratingTopics = 5;
   private int numTerms = 30;
   private Path sampleCorpusPath;
+  private Path testCorpusPath;
+  private Path sampleCorpusCollectionFrequencyPath;
 
   @Before
   public void setup() throws IOException {
+    Configuration conf = new Configuration();
     matrix = ClusteringTestUtils.randomStructuredModel(numGeneratingTopics, numTerms, new DoubleFunction() {
       @Override
       public double apply(double d) {
@@ -66,10 +70,28 @@ public class TestCVBModelTrainer extends MahoutTestCase {
     int numTopicsPerDoc = 1;
 
     sampledCorpus = ClusteringTestUtils.sampledCorpus(matrix, RandomUtils.getRandom(1234),
-                                                             numDocs, numSamples, numTopicsPerDoc);
+                                                      numDocs, numSamples, numTopicsPerDoc);
 
     sampleCorpusPath = getTestTempDirPath("corpus");
-    MatrixUtils.write(sampleCorpusPath, new Configuration(), sampledCorpus);
+    MatrixUtils.write(sampleCorpusPath, conf, sampledCorpus);
+    
+    Matrix testSet = ClusteringTestUtils.sampledCorpus(matrix, RandomUtils.getRandom(9876),
+                                                       numDocs / 10, numSamples, numTopicsPerDoc);
+
+    testCorpusPath = getTestTempDirPath("testSet");
+
+    MatrixUtils.write(testCorpusPath, conf, testSet);
+    
+    sampleCorpusCollectionFrequencyPath = getTestTempDirPath("collectionFrequencies");
+    collectionFrequencies = new DenseVector(matrix.columnSize());
+    for(int feature = 0; feature < collectionFrequencies.size(); feature++) {
+      double fCf = 0;
+      for(int docId = 0; docId < sampledCorpus.rowSize(); docId++) {
+        fCf += sampledCorpus.get(docId, feature);
+      }
+      collectionFrequencies.set(feature, fCf);
+    }
+    MatrixUtils.write(sampleCorpusCollectionFrequencyPath, conf, collectionFrequencies);
   }
 
   @Test
@@ -179,8 +201,12 @@ public class TestCVBModelTrainer extends MahoutTestCase {
   private CVBConfig defaultConfig() {
     return new CVBConfig().setAlpha(ALPHA).setEta(ETA)
                .setBackfillPerplexity(false).setConvergenceDelta(0).setDictionaryPath(null)
-               .setTestFraction(0.2f).setNumTerms(numTerms)
-               .setInputPath(sampleCorpusPath).setNumTrainThreads(1)
+               .setNumTerms(numTerms)
+               .setInputPath(sampleCorpusPath)
+               .setTestSetPath(testCorpusPath)
+               .setCollectionFrequencyPath(sampleCorpusCollectionFrequencyPath)
+               .setCFSparsificationThreshold(1)
+               .setNumTrainThreads(1)
                .setNumUpdateThreads(1).setIterationBlockSize(1);
   }
 
@@ -211,7 +237,7 @@ public class TestCVBModelTrainer extends MahoutTestCase {
     CVBConfig cvbConfig = new CVBConfig().setAlpha(ALPHA).setEta(ETA)
           .setNumTopics(numTopics)
           .setBackfillPerplexity(false).setConvergenceDelta(0).setDictionaryPath(null)
-          .setModelTempPath(topicModelStateTempPath).setTestFraction(0.2f).setNumTerms(numTerms)
+          .setModelTempPath(topicModelStateTempPath).setNumTerms(numTerms)
           .setMaxIterations(numIterations).setInputPath(sampleCorpusPath).setNumTrainThreads(1)
           .setDocTopicPriorPath(priorPath)
           .setNumUpdateThreads(1).setIterationBlockSize(1).setOutputPath(outputPath);

@@ -143,13 +143,15 @@ public class InMemoryCollapsedVariationalBayes0 extends AbstractJob {
   }
 
   private void initializeModel() {
-    topicModel = new TopicModel(numTopics, numTerms, eta, alpha, RandomUtils.getRandom(), terms,
+    Matrix initialModelMatrix = TopicModelBase.randomMatrix(numTopics, numTerms,
+                                                            RandomUtils.getRandom()).getFirst();
+    topicModel = new TopicModel(initialModelMatrix, eta, alpha, terms,
         numUpdatingThreads,
         initialModelCorpusFraction == 0 ? 1 : initialModelCorpusFraction * totalCorpusWeight);
     topicModel.setConf(getConf());
 
     updatedModel = initialModelCorpusFraction == 0
-        ? new TopicModel(numTopics, numTerms, eta, alpha, null, terms, numUpdatingThreads, 1)
+        ? new TopicModel(numTopics, numTerms, eta, alpha, terms, numUpdatingThreads, 1)
         : topicModel;
     updatedModel.setConf(getConf());
     docTopicCounts = new DenseMatrix(numDocuments, numTopics);

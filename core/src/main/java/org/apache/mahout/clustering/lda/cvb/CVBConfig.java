@@ -31,7 +31,10 @@ public class CVBConfig {
   public static final String CURRENT_MODEL_WEIGHT = "current_model_weight";
   public static final String CURRENT_ITERATION_PARAM = "current_iteration";
   public static final String INPUT_PATH_PARAM = DefaultOptionCreator.INPUT_OPTION;
+  public static final String TEST_SET_PATH_PARAM = "test_set_path";
   public static final String DICTIONARY_PATH_PARAM = "dictionary";
+  public static final String COLLECTION_FREQUENCY_PATH_PARAM = "collection_frequency_path";
+  public static final String CF_SPARSIFICATION_PARAM = "cf_sparsification_threshold";
   public static final String DOC_TOPIC_PRIOR_PATH_PARAM = "doc_topic_prior_path";
   public static final String MODEL_TEMP_PATH_PARAM = "topic_model_temp_dir";
   public static final String OUTPUT_PATH_PARAM = DefaultOptionCreator.OUTPUT_OPTION;
@@ -43,8 +46,6 @@ public class CVBConfig {
   public static final String MAX_ITERATIONS_PARAM = DefaultOptionCreator.MAX_ITERATIONS_OPTION;
   public static final String CONVERGENCE_DELTA_PARAM = DefaultOptionCreator.CONVERGENCE_DELTA_OPTION;
   public static final String ITERATION_BLOCK_SIZE_PARAM = "iteration_block_size";
-  public static final String RANDOM_SEED_PARAM = "random_seed";
-  public static final String TEST_SET_FRACTION_PARAM = "test_set_fraction";
   public static final String NUM_TRAIN_THREADS_PARAM = "num_train_threads";
   public static final String NUM_UPDATE_THREADS_PARAM = "num_update_threads";
   public static final String MAX_ITERATIONS_PER_DOC_PARAM = "max_doc_topic_iters";
@@ -62,8 +63,6 @@ public class CVBConfig {
   public static final int MAX_ITERATIONS_DEFAULT = 30;
   public static final int ITERATION_BLOCK_SIZE_DEFAULT = 5;
   public static final float CONVERGENCE_DELTA_DEFAULT = 1e-5f;
-  public static final long RANDOM_SEED_DEFAULT = 1234l;
-  public static final float TEST_SET_FRACTION_DEFAULT = 1e-2f;
   public static final int NUM_TRAIN_THREADS_DEFAULT = 4;
   public static final int NUM_UPDATE_THREADS_DEFAULT = 1;
   public static final int MAX_ITERATIONS_PER_DOC_DEFAULT = 10;
@@ -71,12 +70,15 @@ public class CVBConfig {
   public static final float MODEL_WEIGHT_DEFAULT = 1f;
   public static final float MIN_RELATIVE_PERPLEXITY_DIFF_DEFAULT = 1e-8f;
   public static final int MAX_INFERENCE_ITERATIONS_PER_DOC_DEFAULT = 100;
+  public static final float CF_SPARSIFICATION_THRESHOLD_DEFAULT = 1.0f;
 
   // TODO: sensible defaults and/or checks for validity
   private float currentModelWeight = Float.NaN;
   private int currentIteration = -1;
   private Path inputPath;
+  private Path testSetPath;
   private Path dictionaryPath;
+  private Path collectionFrequencyPath;
   private Path docTopicPriorPath;
   private Path modelTempPath;
   private Path outputPath;
@@ -89,8 +91,6 @@ public class CVBConfig {
   private int iterationBlockSize = ITERATION_BLOCK_SIZE_DEFAULT;
   private float convergenceDelta = CONVERGENCE_DELTA_DEFAULT;
   private boolean persistDocTopics;
-  private long randomSeed = RANDOM_SEED_DEFAULT;
-  private float testFraction = TEST_SET_FRACTION_DEFAULT;
   private int numTrainThreads = NUM_TRAIN_THREADS_DEFAULT;
   private int numUpdateThreads = NUM_UPDATE_THREADS_DEFAULT;
   private int maxItersPerDoc = MAX_ITERATIONS_PER_DOC_DEFAULT;
@@ -100,6 +100,7 @@ public class CVBConfig {
   private float modelWeight = MODEL_WEIGHT_DEFAULT;
   private float minRelPreplexityDiff = MIN_RELATIVE_PERPLEXITY_DIFF_DEFAULT;
   private int maxInferenceItersPerDoc = MAX_INFERENCE_ITERATIONS_PER_DOC_DEFAULT;
+  private float cfSparsificationThreshold = CF_SPARSIFICATION_THRESHOLD_DEFAULT;
 
   public float getCurrentModelWeight() {
     return currentModelWeight;
@@ -137,12 +138,30 @@ public class CVBConfig {
     return this;
   }
 
+  public Path getTestSetPath() {
+    return testSetPath;
+  }
+
+  public CVBConfig setTestSetPath(Path testSetPath) {
+    this.testSetPath = testSetPath;
+    return this;
+  }
+
   public Path getDictionaryPath() {
     return dictionaryPath;
   }
 
   public CVBConfig setDictionaryPath(Path dictionaryPath) {
     this.dictionaryPath = dictionaryPath;
+    return this;
+  }
+
+  public Path getCollectionFrequencyPath() {
+    return collectionFrequencyPath;
+  }
+
+  public CVBConfig setCollectionFrequencyPath(Path collectionFrequencyPath) {
+    this.collectionFrequencyPath = collectionFrequencyPath;
     return this;
   }
 
@@ -260,24 +279,6 @@ public class CVBConfig {
     return this;
   }
 
-  public long getRandomSeed() {
-    return randomSeed;
-  }
-
-  public CVBConfig setRandomSeed(long randomSeed) {
-    this.randomSeed = randomSeed;
-    return this;
-  }
-
-  public float getTestFraction() {
-    return testFraction;
-  }
-
-  public CVBConfig setTestFraction(float testFraction) {
-    this.testFraction = testFraction;
-    return this;
-  }
-
   public int getNumTrainThreads() {
     return numTrainThreads;
   }
@@ -350,6 +351,15 @@ public class CVBConfig {
     return this;
   }
 
+  public float getCfSparsificationThreshold() {
+    return cfSparsificationThreshold;
+  }
+
+  public CVBConfig setCFSparsificationThreshold(float threshold) {
+    this.cfSparsificationThreshold = threshold;
+    return this;
+  }
+
   public void write(Configuration conf) {
     conf.setFloat(CURRENT_MODEL_WEIGHT, currentModelWeight);
     conf.setInt(CURRENT_ITERATION_PARAM, currentIteration);
@@ -357,8 +367,6 @@ public class CVBConfig {
     conf.setInt(NUM_TERMS_PARAM, numTerms);
     conf.setFloat(DOC_TOPIC_SMOOTHING_PARAM, alpha);
     conf.setFloat(TERM_TOPIC_SMOOTHING_PARAM, eta);
-    conf.setLong(RANDOM_SEED_PARAM, randomSeed);
-    conf.setFloat(TEST_SET_FRACTION_PARAM, testFraction);
     conf.setInt(NUM_TRAIN_THREADS_PARAM, numTrainThreads);
     conf.setInt(NUM_UPDATE_THREADS_PARAM, numUpdateThreads);
     conf.setInt(MAX_ITERATIONS_PER_DOC_PARAM, maxItersPerDoc);
@@ -366,6 +374,9 @@ public class CVBConfig {
     conf.setBoolean(ONLY_LABELED_DOCS_PARAM, useOnlyLabeledDocs);
     conf.setFloat(MIN_RELATIVE_PERPLEXITY_DIFF_PARAM, minRelPreplexityDiff);
     conf.setInt(MAX_INFERENCE_ITERATIONS_PER_DOC_PARAM, maxInferenceItersPerDoc);
+    conf.setFloat(CF_SPARSIFICATION_PARAM, cfSparsificationThreshold);
+    conf.set(COLLECTION_FREQUENCY_PATH_PARAM, collectionFrequencyPath.toString());
+    conf.set(TEST_SET_PATH_PARAM, testSetPath.toString());
   }
 
   public CVBConfig read(Configuration conf) {
@@ -375,8 +386,6 @@ public class CVBConfig {
     setNumTerms(conf.getInt(NUM_TERMS_PARAM, 0));
     setAlpha(conf.getFloat(DOC_TOPIC_SMOOTHING_PARAM, 0));
     setEta(conf.getFloat(TERM_TOPIC_SMOOTHING_PARAM, 0));
-    setRandomSeed(conf.getLong(RANDOM_SEED_PARAM, 0));
-    setTestFraction(conf.getFloat(TEST_SET_FRACTION_PARAM, 0));
     setNumTrainThreads(conf.getInt(NUM_TRAIN_THREADS_PARAM, 0));
     setNumUpdateThreads(conf.getInt(NUM_UPDATE_THREADS_PARAM, 0));
     setMaxItersPerDoc(conf.getInt(MAX_ITERATIONS_PER_DOC_PARAM, 0));
@@ -384,6 +393,13 @@ public class CVBConfig {
     setUseOnlyLabeledDocs(conf.getBoolean(ONLY_LABELED_DOCS_PARAM, false));
     setMinRelPreplexityDiff(conf.getFloat(MIN_RELATIVE_PERPLEXITY_DIFF_PARAM, -1));
     setMaxInferenceItersPerDoc(conf.getInt(MAX_INFERENCE_ITERATIONS_PER_DOC_PARAM, 0));
+    if(conf.get(COLLECTION_FREQUENCY_PATH_PARAM) != null) {
+      setCollectionFrequencyPath(new Path(conf.get(COLLECTION_FREQUENCY_PATH_PARAM)));
+    }
+    if(conf.get(TEST_SET_PATH_PARAM) != null) {
+      setTestSetPath(new Path(conf.get(TEST_SET_PATH_PARAM)));
+    }
+    setCFSparsificationThreshold(conf.getFloat(CF_SPARSIFICATION_PARAM, -1));
     check();
     return this;
   }
@@ -397,14 +413,13 @@ public class CVBConfig {
     checkGreater(NUM_TERMS_PARAM, numTerms, numTopics);
     checkPositive(DOC_TOPIC_SMOOTHING_PARAM, alpha);
     checkPositive(TERM_TOPIC_SMOOTHING_PARAM, eta);
-    checkPositive(RANDOM_SEED_PARAM, randomSeed);
-    checkPositive(TEST_SET_FRACTION_PARAM, testFraction);
     checkPositive(NUM_TRAIN_THREADS_PARAM, numTrainThreads);
     checkPositive(NUM_UPDATE_THREADS_PARAM, numUpdateThreads);
     checkPositive(MAX_ITERATIONS_PER_DOC_PARAM, maxItersPerDoc);
     checkGreaterOrEqual(MODEL_WEIGHT_PARAM, modelWeight, 1);
     checkGreaterOrEqual(MIN_RELATIVE_PERPLEXITY_DIFF_PARAM, minRelPreplexityDiff, 0);
     checkPositive(MAX_INFERENCE_ITERATIONS_PER_DOC_PARAM, maxInferenceItersPerDoc);
+    checkGreaterOrEqual(CF_SPARSIFICATION_PARAM, cfSparsificationThreshold, 0);
   }
 
   protected void checkGreater(String param, Number value, Number threshold) {

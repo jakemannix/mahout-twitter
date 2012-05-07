@@ -21,9 +21,12 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.mapreduce.Mapper;
+import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.mahout.common.MemoryUtil;
+import org.apache.mahout.common.Pair;
 import org.apache.mahout.common.RandomUtils;
 import org.apache.mahout.math.DenseVector;
+import org.apache.mahout.math.Matrix;
 import org.apache.mahout.math.Vector;
 import org.apache.mahout.math.VectorWritable;
 import org.slf4j.Logger;
@@ -36,10 +39,9 @@ public class CachingCVB0PerplexityMapper extends
     Mapper<IntWritable, VectorWritable, DoubleWritable, DoubleWritable> {
   private static final Logger log = LoggerFactory.getLogger(CachingCVB0PerplexityMapper.class);
   private ModelTrainer modelTrainer;
+  protected VectorSparsifier sparsifier;
   private int maxIters;
   private int numTopics;
-  private float testFraction;
-  private Random random;
   private Vector topicVector;
   private final DoubleWritable outKey = new DoubleWritable();
   private final DoubleWritable outValue = new DoubleWritable();
@@ -53,25 +55,34 @@ public class CachingCVB0PerplexityMapper extends
     CVBConfig config = new CVBConfig().read(conf);
     float eta = config.getEta();
     float alpha = config.getAlpha();
-    long seed = config.getRandomSeed();
-    random = RandomUtils.getRandom(seed);
     numTopics = config.getNumTopics();
     int numTerms = config.getNumTerms();
     int numUpdateThreads = config.getNumUpdateThreads();
     int numTrainThreads = config.getNumTrainThreads();
     maxIters = config.getMaxItersPerDoc();
     float modelWeight = config.getModelWeight();
-    testFraction = config.getTestFraction();
 
     log.info("Initializing read model");
     TopicModel readModel;
     Path[] modelPaths = CVB0Driver.getModelPaths(conf);
+
+    Class<? extends VectorSparsifier> sparsifierClass = BackgroundFrequencyVectorSparsifier.class;
+/*          context.getConfiguration().getClass(SparsifyingVectorSumReducer.SPARSIFIER_CLASS,
+                                              NoopVectorSparsifier.class,
+                                              VectorSparsifier.class); */
+    sparsifier = ReflectionUtils.newInstance(sparsifierClass, context.getConfiguration());
+    sparsifier.setConf(conf);
+
     if(modelPaths != null && modelPaths.length > 0) {
-      readModel = new TopicModel(conf, eta, alpha, null, numUpdateThreads, modelWeight, modelPaths);
+      Pair<Matrix, Vector> matrix = TopicModelBase.loadModel(conf, modelPaths);
+      Matrix modelMatrix = matrix.getFirst();
+      if (sparsifier != null) {
+        modelMatrix = sparsifier.rebalance(modelMatrix);
+      }
+      readModel = new TopicModel(modelMatrix, eta, alpha, null, numUpdateThreads, modelWeight);
     } else {
       log.info("No model files found");
-      readModel = new TopicModel(numTopics, numTerms, eta, alpha, RandomUtils.getRandom(seed), null,
-          numTrainThreads, modelWeight);
+      throw new IOException("No model files found when computing perplexity!?!");
     }
 
     log.info("Initializing model trainer");
@@ -89,9 +100,6 @@ public class CachingCVB0PerplexityMapper extends
   @Override
   public void map(IntWritable docId, VectorWritable document, Context context)
       throws IOException, InterruptedException{
-    if (1 > testFraction && random.nextFloat() >= testFraction) {
-      return;
-    }
     context.getCounter(CVB0Driver.Counters.SAMPLED_DOCUMENTS).increment(1);
     outKey.set(document.get().norm(1));
     outValue.set(modelTrainer.calculatePerplexity(document.get(), topicVector.assign(1.0 / numTopics), maxIters));

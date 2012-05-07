@@ -20,6 +20,7 @@ import com.google.common.collect.Lists;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.SequenceFile;
 import org.apache.hadoop.io.Writable;
@@ -28,6 +29,7 @@ import org.apache.mahout.common.iterator.sequencefile.SequenceFileIterable;
 import org.apache.mahout.math.map.OpenObjectIntHashMap;
 
 import java.io.IOException;
+import java.util.Iterator;
 import java.util.List;
 
 public final class MatrixUtils {
@@ -35,7 +37,14 @@ public final class MatrixUtils {
   private MatrixUtils() {
   }
 
+
   public static void write(Path outputDir, Configuration conf, VectorIterable matrix)
+      throws IOException {
+    write(outputDir, conf, matrix, true);
+  }
+  
+  public static void write(Path outputDir, Configuration conf, VectorIterable matrix, 
+                           boolean onlyNonZero)
       throws IOException {
     FileSystem fs = outputDir.getFileSystem(conf);
     fs.delete(outputDir, true);
@@ -44,9 +53,30 @@ public final class MatrixUtils {
     IntWritable topic = new IntWritable();
     VectorWritable vector = new VectorWritable();
     for(MatrixSlice slice : matrix) {
+      Vector v = slice.vector();
+      if (onlyNonZero && v.getNumNondefaultElements() == 0) {
+        continue;
+      }
       topic.set(slice.index());
-      vector.set(slice.vector());
+      vector.set(v);
       writer.append(topic, vector);
+    }
+    writer.close();
+  }
+  
+  public static void write(Path outputDir, Configuration conf, Vector vector) throws IOException {
+    FileSystem fs = outputDir.getFileSystem(conf);
+    fs.delete(outputDir, true);
+    SequenceFile.Writer writer = SequenceFile.createWriter(fs, conf, outputDir,
+                                                           IntWritable.class, DoubleWritable.class);
+    IntWritable featureId = new IntWritable();
+    DoubleWritable value = new DoubleWritable();
+    Iterator<Vector.Element> it = vector.iterateNonZero();
+    Vector.Element e;
+    while(it.hasNext() && (e = it.next()) != null) {
+      featureId.set(e.index());
+      value.set(e.get());
+      writer.append(featureId, value);
     }
     writer.close();
   }

@@ -54,6 +54,7 @@ import org.apache.mahout.common.iterator.sequencefile.PathType;
 import org.apache.mahout.common.iterator.sequencefile.SequenceFileDirIterable;
 import org.apache.mahout.common.mapreduce.VectorSumReducer;
 import org.apache.mahout.math.Matrix;
+import org.apache.mahout.math.MatrixUtils;
 import org.apache.mahout.math.VectorWritable;
 import org.apache.mahout.vectorizer.SparseVectorsFromSequenceFiles;
 import org.slf4j.Logger;
@@ -141,11 +142,12 @@ public class CVB0Driver extends AbstractJob {
     addOption(CVBConfig.DOC_TOPIC_SMOOTHING_PARAM, "a", "Smoothing for document/topic distribution", String.valueOf(CVBConfig.DOC_TOPIC_SMOOTHING_DEFAULT));
     addOption(CVBConfig.TERM_TOPIC_SMOOTHING_PARAM, "e", "Smoothing for topic/term distribution", String.valueOf(CVBConfig.TERM_TOPIC_SMOOTHING_DEFAULT));
     addOption(CVBConfig.DICTIONARY_PATH_PARAM, "dict", "Path to term-dictionary file(s) (glob expression supported)", false);
+    addOption(CVBConfig.COLLECTION_FREQUENCY_PATH_PARAM, "freqs", "Path to collection-frequency statistics file(s) (glob expression supported)", false);
+    addOption(CVBConfig.TEST_SET_PATH_PARAM, "ts", "Path to held-out document set for perplexity checking (glob expression supported", false);
+    addOption(CVBConfig.CF_SPARSIFICATION_PARAM, "cfs", "Minimum collection frequency ratio (relative to background) to keep after sparsification");
     addOption(CVBConfig.DOC_TOPIC_OUTPUT_PATH_PARAM, "dt", "Output path for the training doc/topic distribution", false);
     addOption(CVBConfig.MODEL_TEMP_PATH_PARAM, "mt", "Path to intermediate model path (useful for restarting)", false);
     addOption(CVBConfig.ITERATION_BLOCK_SIZE_PARAM, "block", "Number of iterations per perplexity check", String.valueOf(CVBConfig.ITERATION_BLOCK_SIZE_DEFAULT));
-    addOption(CVBConfig.RANDOM_SEED_PARAM, "seed", "Random seed", String.valueOf(CVBConfig.RANDOM_SEED_DEFAULT));
-    addOption(CVBConfig.TEST_SET_FRACTION_PARAM, "tf", "Fraction of data to hold out for testing", String.valueOf(CVBConfig.TEST_SET_FRACTION_DEFAULT));
     addOption(CVBConfig.NUM_TRAIN_THREADS_PARAM, "ntt", "number of threads per mapper to train with", String.valueOf(CVBConfig.NUM_TRAIN_THREADS_DEFAULT));
     addOption(CVBConfig.NUM_UPDATE_THREADS_PARAM, "nut", "number of threads per mapper to update the model with", String.valueOf(CVBConfig.NUM_UPDATE_THREADS_DEFAULT));
     addOption(CVBConfig.PERSIST_INTERMEDIATE_DOCTOPICS_PARAM, "pidt", "persist and update intermediate p(topic|doc)", "false");
@@ -172,7 +174,18 @@ public class CVB0Driver extends AbstractJob {
     int numUpdateThreads = Integer.parseInt(getOption(CVBConfig.NUM_UPDATE_THREADS_PARAM));
     int maxItersPerDoc = Integer.parseInt(getOption(CVBConfig.MAX_ITERATIONS_PER_DOC_PARAM));
     int maxInferenceItersPerDoc = Integer.parseInt(getOption(CVBConfig.MAX_INFERENCE_ITERATIONS_PER_DOC_PARAM));
-    Path dictionaryPath = hasOption(CVBConfig.DICTIONARY_PATH_PARAM) ? new Path(getOption(CVBConfig.DICTIONARY_PATH_PARAM)) : null;
+    Path dictionaryPath = hasOption(CVBConfig.DICTIONARY_PATH_PARAM)
+                              ? new Path(getOption(CVBConfig.DICTIONARY_PATH_PARAM))
+                              : null;
+    Path collectionFreqPath = hasOption(CVBConfig.COLLECTION_FREQUENCY_PATH_PARAM)
+                                  ? new Path(getOption(CVBConfig.COLLECTION_FREQUENCY_PATH_PARAM))
+                                  : null;
+    Path testSetPath = hasOption(CVBConfig.TEST_SET_PATH_PARAM) 
+                     ? new Path(getOption(CVBConfig.TEST_SET_PATH_PARAM))
+                     : null;
+    float minSparsifiedCfRatio = hasOption(CVBConfig.CF_SPARSIFICATION_PARAM)
+                               ? Float.parseFloat(getOption(CVBConfig.CF_SPARSIFICATION_PARAM))
+                               : CVBConfig.CF_SPARSIFICATION_THRESHOLD_DEFAULT;
     int numTerms = hasOption(CVBConfig.NUM_TERMS_PARAM)
                  ? Integer.parseInt(getOption(CVBConfig.NUM_TERMS_PARAM))
                  : getNumTerms(getConf(), dictionaryPath);
@@ -183,27 +196,24 @@ public class CVB0Driver extends AbstractJob {
     Path modelTempPath = hasOption(CVBConfig.MODEL_TEMP_PATH_PARAM)
                        ? new Path(getOption(CVBConfig.MODEL_TEMP_PATH_PARAM))
                        : getTempPath("topicModelState");
-    long seed = hasOption(CVBConfig.RANDOM_SEED_PARAM)
-              ? Long.parseLong(getOption(CVBConfig.RANDOM_SEED_PARAM))
-              : System.nanoTime() % 10000;
-    float testFraction = hasOption(CVBConfig.TEST_SET_FRACTION_PARAM)
-                       ? Float.parseFloat(getOption(CVBConfig.TEST_SET_FRACTION_PARAM))
-                       : 0.0f;
     int numReduceTasks = Integer.parseInt(getOption(CVBConfig.NUM_REDUCE_TASKS_PARAM));
     boolean backfillPerplexity = hasOption(CVBConfig.BACKFILL_PERPLEXITY_PARAM);
     boolean useOnlyLabeledDocs = hasOption(CVBConfig.ONLY_LABELED_DOCS_PARAM); // check!
     CVBConfig cvbConfig = new CVBConfig().setAlpha(alpha).setEta(eta)
         .setBackfillPerplexity(backfillPerplexity).setConvergenceDelta(convergenceDelta)
         .setDictionaryPath(dictionaryPath).setOutputPath(topicModelOutputPath)
+        .setCollectionFrequencyPath(collectionFreqPath)
+        .setTestSetPath(testSetPath)
         .setDocTopicOutputPath(docTopicOutputPath)
         .setDocTopicPriorPath(docTopicPriorPath).setInputPath(inputPath)
         .setPersistDocTopics(persistDocTopics)
+        .setCFSparsificationThreshold(minSparsifiedCfRatio)
         .setIterationBlockSize(iterationBlockSize).setMaxIterations(maxIterations)
         .setMaxItersPerDoc(maxItersPerDoc).setModelTempPath(modelTempPath)
         .setMaxInferenceItersPerDoc(maxInferenceItersPerDoc)
         .setNumReduceTasks(numReduceTasks).setNumTrainThreads(numTrainThreads)
         .setNumUpdateThreads(numUpdateThreads).setNumTerms(numTerms).setNumTopics(numTopics)
-        .setTestFraction(testFraction).setRandomSeed(seed).setUseOnlyLabeledDocs(useOnlyLabeledDocs);
+        .setUseOnlyLabeledDocs(useOnlyLabeledDocs);
     return run(getConf(), cvbConfig);
   }
 
@@ -232,25 +242,22 @@ public class CVB0Driver extends AbstractJob {
    public static int run(Configuration conf, CVBConfig c)
        throws ClassNotFoundException, IOException, InterruptedException {
      // verify arguments
-     Preconditions.checkArgument(c.getTestFraction() >= 0.0 && c.getTestFraction() <= 1.0,
-        "Expected 'testFraction' value in range [0, 1] but found value '%s'", c.getTestFraction());
-     Preconditions.checkArgument(!c.isBackfillPerplexity() || c.getTestFraction() > 0.0,
-         "Expected 'testFraction' value in range (0, 1] but found value '%s'", c.getTestFraction());
 
       String infoString = "Will run Collapsed Variational Bayes (0th-derivative approximation) " +
         "learning for LDA on {} (numTerms: {}), finding {}-topics, with document/topic prior {}, " +
         "topic/term prior {}.  Maximum iterations to run will be {}, unless the change in " +
         "perplexity is less than {}.  Topic model output (p(term|topic) for each topic) will be " +
-        "stored {}.  Random initialization seed is {}, holding out {} of the data for perplexity " +
-       "check.  {}{}\n";
+        "stored {}.  {}{}\n";
      log.info(infoString, new Object[] {c.getInputPath(), c.getNumTerms(), c.getNumTopics(),
          c.getAlpha(), c.getEta(), c.getMaxIterations(),
-         c.getConvergenceDelta(), c.getOutputPath(), c.getRandomSeed(), c.getTestFraction(),
+         c.getConvergenceDelta(), c.getOutputPath(),
          c.isPersistDocTopics() ? "Persisting intermediate p(topic|doc)" : "",
          c.getDocTopicPriorPath() != null ? "  Using " + c.getDocTopicPriorPath()
                                             + " as p(topic|doc) prior" : ""});
      infoString = c.getDictionaryPath() == null
                 ? "" : "Dictionary to be used located " + c.getDictionaryPath().toString() + '\n';
+     infoString += c.getCollectionFrequencyPath() == null 
+                ? "" : "Collection freqs located " + c.getCollectionFrequencyPath().toString() + "\n";
      infoString += c.getDocTopicOutputPath() == null
                 ? "" : "p(topic|docId) will be stored " + c.getDocTopicOutputPath().toString() + '\n';
      log.info(infoString);
@@ -261,7 +268,8 @@ public class CVB0Driver extends AbstractJob {
 
      // if it's the first iteration, and there are no document priors, then write the initial
      // randomized model to HDFS for use in all the first iteration mappers.
-     if(currentIteration == 1 && c.getDocTopicPriorPath() != null) {
+     // TODO: may require sparsification!
+     if(currentIteration == 1) {
        writeInitialTopicModel(conf, c, modelPath(c.getModelTempPath(), 0));
      }
 
@@ -302,10 +310,10 @@ public class CVB0Driver extends AbstractJob {
       log.info("About to run iteration {} of {}", currentIteration, c.getMaxIterations());
       runIteration(conf, c, currentIteration);
 
-      if(c.getTestFraction() > 0 && currentIteration % c.getIterationBlockSize() == 0) {
+      if(c.getTestSetPath() != null && currentIteration % c.getIterationBlockSize() == 0) {
         // calculate perplexity
         Path modelPath = modelPath(c.getModelTempPath(), currentIteration);
-        double perplexity = calculatePerplexity(conf, c.getInputPath(), modelPath, currentIteration);
+        double perplexity = calculatePerplexity(conf, c.getTestSetPath(), modelPath, currentIteration);
         perplexities.add(perplexity);
         double delta = rateOfChange(perplexities);
         log.info("Current perplexity = {}", perplexity);
@@ -342,12 +350,9 @@ public class CVB0Driver extends AbstractJob {
 
   private static void writeInitialTopicModel(Configuration conf, CVBConfig c, Path path)
       throws IOException {
-    TopicModelBase topicModel = new TopicModel(c.getNumTopics(), c.getNumTerms(), c.getEta(),
-                                               c.getAlpha(),
-                                               RandomUtils.getRandom(c.getRandomSeed()),
-                                               null, c.getNumTrainThreads(), c.getModelWeight());
-    topicModel.setConf(conf);
-    topicModel.persist(new Path(path, "part-r-00000"), true);
+    Matrix initialModel = TopicModelBase.randomMatrix(c.getNumTopics(), c.getNumTerms(),
+                                                      RandomUtils.getRandom(1234L)).getFirst();
+    MatrixUtils.write(new Path(path, "part-r-00000"), conf, initialModel);
   }
 
   private static double rateOfChange(List<Double> perplexities) {
@@ -645,10 +650,13 @@ public class CVB0Driver extends AbstractJob {
     String jobName = String.format("Iteration %d of %d, input model path: %s",
         currentIteration, c.getMaxIterations(), modelInput);
     Job job = new Job(conf, jobName);
+    conf.setClass(SparsifyingVectorSumReducer.SPARSIFIER_CLASS,
+                  BackgroundFrequencyVectorSparsifier.class,
+                  VectorSparsifier.class);
     job.setJarByClass(CVB0Driver.class);
     job.setMapperClass(CachingCVB0Mapper.class);
     job.setCombinerClass(VectorSumReducer.class);
-    job.setReducerClass(VectorSumReducer.class);
+    job.setReducerClass(SparsifyingVectorSumReducer.class);
     job.setNumReduceTasks(c.getNumReduceTasks());
     job.setOutputKeyClass(IntWritable.class);
     job.setOutputValueClass(VectorWritable.class);
@@ -669,7 +677,10 @@ public class CVB0Driver extends AbstractJob {
   }
 
   private static void setModelPaths(Configuration conf, Path modelPath) throws IOException {
-    conf.setStrings(MODEL_PATHS, getModelPaths(conf, modelPath));
+    String[] modelPaths = getModelPaths(conf, modelPath);
+    if (modelPaths != null) {
+      conf.setStrings(MODEL_PATHS, modelPaths);
+    }
   }
   
   public static String[] getModelPaths(Configuration conf, Path modelPath) throws IOException {

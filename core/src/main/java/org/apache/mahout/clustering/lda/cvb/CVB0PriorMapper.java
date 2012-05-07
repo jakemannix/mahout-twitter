@@ -62,14 +62,11 @@ public class CVB0PriorMapper extends MapReduceBase implements
     CVBConfig c = new CVBConfig().read(conf);
     double eta = c.getEta();
     double alpha = c.getAlpha();
-    long seed = c.getRandomSeed();
-    random = RandomUtils.getRandom(seed);
     numTopics = c.getNumTopics();
     int numTerms = c.getNumTerms();
     int numUpdateThreads = c.getNumUpdateThreads();
     int numTrainThreads = c.getNumTrainThreads();
     double modelWeight = c.getModelWeight();
-    testFraction = c.getTestFraction();
     log.info("Initializing read model");
     TopicModel readModel;
     Path[] modelPaths = CVB0Driver.getModelPaths(conf);
@@ -77,8 +74,7 @@ public class CVB0PriorMapper extends MapReduceBase implements
       readModel = new TopicModel(conf, eta, alpha, null, numUpdateThreads, modelWeight, modelPaths);
     } else {
       log.info("No model files found");
-      readModel = new TopicModel(numTopics, numTerms, eta, alpha, RandomUtils.getRandom(seed), null,
-          numTrainThreads, modelWeight);
+      throw new IOException("No model files found, some initial seed required");
     }
 
     log.info("Initializing model trainer");

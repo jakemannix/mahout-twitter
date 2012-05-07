@@ -98,12 +98,7 @@ public class PriorTrainingReducer extends MapReduceBase
         Matrix m;
         Vector topicSums;
         if(c.getDocTopicPriorPath() == null) {
-          log.info("No model files found, no p(topic|doc) priors, so randomizing p(term|topic) on "
-                   + c.getRandomSeed() + " as random seed");
-          Pair<Matrix, Vector> p = TopicModelBase.randomMatrix(numTopics, numTerms,
-                                     RandomUtils.getRandom(c.getRandomSeed()));
-          m = p.getFirst();
-          topicSums = p.getSecond();
+          throw new IOException("Either modelPaths or docTopicPriorPath must be set");
         } else {
           log.info("No model files found, starting with uniform p(term|topic) prior, " +
                    "taking randomness from the p(topic|doc) priors in " + 

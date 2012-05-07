@@ -19,7 +19,7 @@ package org.apache.mahout.math;
 
 import java.io.Serializable;
 
-final class OrderedIntDoubleMapping implements Serializable, Cloneable {
+public final class OrderedIntDoubleMapping implements Serializable, Cloneable {
 
   static final double DEFAULT_VALUE = 0.0;
 
