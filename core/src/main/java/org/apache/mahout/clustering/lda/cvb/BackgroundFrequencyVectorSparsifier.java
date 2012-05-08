@@ -6,6 +6,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.mapreduce.Counter;
 import org.apache.mahout.common.Pair;
 import org.apache.mahout.common.iterator.sequencefile.SequenceFileIterable;
 import org.apache.mahout.math.DenseVector;
@@ -20,6 +21,7 @@ public class BackgroundFrequencyVectorSparsifier extends Configured implements V
   private float minCfRatio = Float.NaN;
   private double[] collectionFrequencies = null;
   private double corpusWeight = -1;
+  private Counter completelySparsifiedFeatureCounter = null;
 
   public BackgroundFrequencyVectorSparsifier() {
   }
@@ -31,6 +33,10 @@ public class BackgroundFrequencyVectorSparsifier extends Configured implements V
   
   public BackgroundFrequencyVectorSparsifier(double[] collectionFrequencies, float minCfRatio) {
     this(new DenseVector(collectionFrequencies), minCfRatio);
+  }
+  
+  public void setSparsifiedCounter(Counter counter) {
+    this.completelySparsifiedFeatureCounter = counter;
   }
   
   private void setMinCfRatio(float minCfRatio) {
@@ -67,13 +73,13 @@ public class BackgroundFrequencyVectorSparsifier extends Configured implements V
 
     Vector output = new RandomAccessSparseVector(input.size());
 
-    IntArrayList indexes = new IntArrayList(11);
-    DoubleArrayList values = new DoubleArrayList(11);
+ //   IntArrayList indexes = new IntArrayList(11);
+ //   DoubleArrayList values = new DoubleArrayList(11);
     double mult = minCfRatio * input.norm(1) / corpusWeight;
     for(int i = 0; i < collectionFrequencies.length; i++) {
       if(input.get(i) > collectionFrequencies[i] * mult) {
-        indexes.add(i);
-        values.add(input.get(i));
+ //       indexes.add(i);
+ //       values.add(input.get(i));
         output.set(i, input.get(i));
       }
     }
@@ -93,13 +99,21 @@ public class BackgroundFrequencyVectorSparsifier extends Configured implements V
       for(int topic = 0; topic < modelMatrix.rowSize(); topic++) {
         modelFeatureWeight += modelMatrix.get(topic, feature);
       }
-      Preconditions.checkState(modelFeatureWeight > 0,
-                               "feature " + feature + " has zero weight in model!");
-      double mult = collectionFrequency / modelFeatureWeight;
-      for(int topic = 0; topic < modelMatrix.rowSize(); topic++) {
-        double oldVal = modelMatrix.get(topic, feature);
-        if(oldVal != 0) {
-          modelMatrix.set(topic, feature, oldVal * mult);
+      if(modelFeatureWeight == 0) {
+        if(completelySparsifiedFeatureCounter != null) {
+          completelySparsifiedFeatureCounter.increment(1);
+        }
+        double flatCount = collectionFrequency / modelMatrix.numRows();
+        for(int topic = 0; topic < modelMatrix.rowSize(); topic++) {
+          modelMatrix.set(topic, feature, flatCount);
+        }
+      } else {
+        double mult = collectionFrequency / modelFeatureWeight;
+        for(int topic = 0; topic < modelMatrix.rowSize(); topic++) {
+          double oldVal = modelMatrix.get(topic, feature);
+          if(oldVal != 0) {
+            modelMatrix.set(topic, feature, oldVal * mult);
+          }
         }
       }
     }

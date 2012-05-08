@@ -88,8 +88,10 @@ public class CachingCVB0Mapper
 /*          context.getConfiguration().getClass(SparsifyingVectorSumReducer.SPARSIFIER_CLASS,
                                              NoopVectorSparsifier.class,
                                              VectorSparsifier.class); */
-      sparsifier = ReflectionUtils.newInstance(sparsifierClass, context.getConfiguration());
-      sparsifier.setConf(conf);
+      BackgroundFrequencyVectorSparsifier bfvs = new BackgroundFrequencyVectorSparsifier();
+      bfvs.setConf(conf);
+      bfvs.setSparsifiedCounter(context.getCounter(CVB0Driver.Counters.COMPLETELY_SPARSIFIED_FEATURES));
+      sparsifier = bfvs;
     }
 
     log.info("Initializing read model");

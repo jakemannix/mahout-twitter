@@ -123,7 +123,13 @@ public class CVB0Driver extends AbstractJob {
      * @see CachingCVB0Mapper
      * @see CachingCVB0PerplexityMapper
      */
-    SAMPLED_DOCUMENTS
+    SAMPLED_DOCUMENTS,
+    /**
+     * Number of features which have been sparsified so that they have zero projection onto
+     * all topics
+     * @see CachingCVB0Mapper
+     */
+    COMPLETELY_SPARSIFIED_FEATURES
   }
 
   private static final Logger log = LoggerFactory.getLogger(CVB0Driver.class);
