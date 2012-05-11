@@ -63,6 +63,7 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
   private final int numTerms;
   private final double eta;
   private final double alpha;
+  private final Vector uniform;
   private final Sampler sampler;
   private final int numThreads;
   private final Updater[] updaters;
@@ -73,7 +74,7 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
     setConf(conf);
   }
 
-  public TopicModel(int numTopics, int numTerms, double eta, double alpha, 
+  public TopicModel(int numTopics, int numTerms, double eta, double alpha,
       int numThreads, double modelWeight) {
     this(new DenseMatrix(numTopics, numTerms), new DenseVector(numTopics), eta, alpha,
         numThreads, modelWeight);
@@ -89,20 +90,21 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
     this(topicTermCounts, topicSums, eta, alpha, 1, modelWeight);
   }
 
-  public TopicModel(Matrix topicTermCounts, double eta, double alpha, 
+  public TopicModel(Matrix topicTermCounts, double eta, double alpha,
       int numThreads, double modelWeight) {
     this(topicTermCounts, viewRowSums(topicTermCounts),
         eta, alpha, numThreads, modelWeight);
   }
 
   public TopicModel(Matrix topicTermCounts, Vector topicSums, double eta, double alpha,
-                    int numThreads, double modelWeight) {
+    int numThreads, double modelWeight) {
     super(topicSums.size());
     this.topicTermCounts = topicTermCounts;
     this.topicSums = topicSums;
     this.numTerms = topicTermCounts.numCols();
     this.eta = eta;
     this.alpha = alpha;
+    this.uniform = new DenseVector(numTopics).assign(1.0 / numTopics);
     this.sampler = new Sampler(RandomUtils.getRandom());
     this.numThreads = numThreads;
     this.updaters = new Updater[numThreads];
@@ -195,22 +197,20 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
     Iterator<Vector.Element> it = original.iterateNonZero();
     Vector.Element e = null;
     while(it.hasNext() && (e = it.next())!= null && e.index() < numTerms) { // protect vs. big docs
-      docTopicModel.viewColumn(e.index()).assign(Functions.mult(e.get()));
+      for(int x = 0; x < numTopics; x++) {
+        Vector docTopicModelRow = docTopicModel.viewRow(x);
+        docTopicModelRow.setQuick(e.index(), docTopicModelRow.getQuick(e.index()) * e.get());
+      }
     }
     // now recalculate p(topic|doc) by summing contributions from all of pTopicGivenTerm
     topics.assign(0.0);
-    it = original.iterateNonZero();
-    e = null;
-    while(it.hasNext()) {
-      e = it.next();
-      int feature = e.index();
-      Vector weightsForThisFeature = docTopicModel.viewColumn(feature);
-      Iterator<Vector.Element> weightIterator = weightsForThisFeature.iterateNonZero();
-      while(weightIterator.hasNext()) {
-        Vector.Element weightElement = weightIterator.next();
-        int topic = weightElement.index();
-        topics.set(topic, topics.get(topic) + weightElement.get());
+    for(int x = 0; x < numTopics; x++) {
+      it = original.iterateNonZero();
+      double norm = 0;
+      while(it.hasNext() && (e = it.next())!= null && e.index() < numTerms) {
+        norm += docTopicModel.get(x, e.index());
       }
+      topics.set(x, norm);
     }
     // now renormalize so that sum_x(p(x|doc)) = 1
     topics.assign(Functions.mult(1.0 / topics.norm(1)));
@@ -257,11 +257,8 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
 
   @Override
   public void update(DocTrainingState state) {
-    Iterator<Vector.Element> it = state.getDocument().iterateNonZero();
-    while(it.hasNext()) {
-      int feature = it.next().index();
-      topicTermCounts.viewColumn(feature).assign(state.getDocTopicModel().viewColumn(feature),
-                                                    Functions.PLUS);
+    for(int x = 0; x < numTopics; x++) {
+      updaters[x % updaters.length].update(x, state.getDocTopicModel().viewRow(x));
     }
   }
 
@@ -293,32 +290,7 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
    * @param termTopicDist storage for output {@code p(x|a,i)} distributions.
    */
   private void pTopicGivenTerm(Vector document, Vector docTopics, Matrix termTopicDist) {
-    Iterator<Vector.Element> it1 = document.iterateNonZero();
-    Vector.Element e1 = null;
-    while(it1.hasNext() && (e1 = it1.next()) != null && e1.index() < numTerms) {
-      int featureId = e1.index();
-      Vector termTopicOutputColumn = termTopicDist.viewColumn(featureId);
-      if (termTopicOutputColumn == null) {
-        termTopicOutputColumn = new RandomAccessSparseVector(docTopics.size());
-        termTopicDist.assignColumn(featureId, termTopicOutputColumn);
-        termTopicOutputColumn = termTopicDist.viewColumn(featureId);
-      }
-      Vector topicColumn = topicTermCounts.viewColumn(featureId);
-      // TODO: check if null?  could be, maybe?
-      Iterator<Vector.Element> topIter = topicColumn.iterateNonZero();
-      while(topIter.hasNext()) {
-        Vector.Element topicTermCountElement = topIter.next();
-        int x = topicTermCountElement.index();
-        double topicSum = topicSums.get(x);
-        double topicWeight = docTopics == null ? 1.0 : docTopics.get(x);
-        double topicMult = (topicWeight + alpha) / (topicSum + eta * numTerms);
-        double termTopicLikelihoood = (topicTermCountElement.get() + eta) * topicMult;
-        termTopicOutputColumn.set(x, termTopicLikelihoood);
-      }
-    }
-    
-    /* for each topic x
-    
+    // for each topic x
     for(int x = 0; x < numTopics; x++) {
       // get p(topic x | document i), or 1.0 if docTopics is null
       double topicWeight = docTopics == null ? 1.0 : docTopics.get(x);
@@ -342,7 +314,6 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
         termTopicRow.set(termIndex, termTopicLikelihood);
       }
     }
-    */
   }
 
   /**
@@ -357,15 +328,10 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
     while(it.hasNext() && (e = it.next()) != null && e.index() < numTerms) {
       int term = e.index();
       double prob = 0;
-      Vector topicTermColumn = topicTermCounts.viewColumn(term);
-      Iterator<Vector.Element> ttIt = topicTermColumn.iterateNonZero();
-      Vector.Element modelElement = null;
-      while(ttIt.hasNext()) {
-        modelElement = ttIt.next();
-        int topic = modelElement.index();
-        double d = (docTopics.get(topic) + alpha) / norm;
-        double p = d * (modelElement.get() + eta) / 
-                       (topicSums.get(topic) + eta * numTerms);
+      for(int x = 0; x < numTopics; x++) {
+        double d = (docTopics.get(x) + alpha) / norm;
+        double p = d * (topicTermCounts.viewRow(x).get(term) + eta)
+                   / (topicSums.get(x) + eta * numTerms);
         prob += p;
       }
       perplexity += e.get() * Math.log(prob);
@@ -384,8 +350,13 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
     while(it.hasNext()) {
       Vector.Element e = it.next();
       int a = e.index();
-      double sum = perTopicSparseDistributions.viewColumn(a).norm(1);
-      perTopicSparseDistributions.viewColumn(a).assign(Functions.div(1.0 / sum));
+      double sum = 0;
+      for(int x = 0; x < numTopics; x++) {
+        sum += perTopicSparseDistributions.get(x, a);
+      }
+      for(int x = 0; x < numTopics; x++) {
+        perTopicSparseDistributions.set(x, a, perTopicSparseDistributions.get(x, a) / sum);
+      }
     }
   }
 
