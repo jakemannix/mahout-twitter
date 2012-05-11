@@ -356,6 +356,8 @@ public class CVB0Driver extends AbstractJob {
 
   private static void writeInitialTopicModel(Configuration conf, CVBConfig c, Path path)
       throws IOException {
+    // make sure this is not RAM intensive even at scale for numTopics && numTerms
+    // generate each vector sparsely
     Matrix initialModel = TopicModelBase.randomMatrix(c.getNumTopics(), c.getNumTerms(),
                                                       RandomUtils.getRandom(1234L)).getFirst();
     MatrixUtils.write(new Path(path, "part-r-00000"), conf, initialModel);

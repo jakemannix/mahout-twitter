@@ -15,13 +15,15 @@ public class SparsifyingVectorSumReducer
   private VectorSparsifier sparsifier;
 
   @Override
-  public void setup(Context ctx) {
+  public void setup(Context ctx) throws IOException {
     Class<? extends VectorSparsifier> sparsifierClass = BackgroundFrequencyVectorSparsifier.class;
 /*        ctx.getConfiguration().getClass(SPARSIFIER_CLASS,
                                         NoopVectorSparsifier.class,
                                         VectorSparsifier.class); */
 
     sparsifier = ReflectionUtils.newInstance(sparsifierClass, ctx.getConfiguration());
+    sparsifier.setConf(ctx.getConfiguration());
+    sparsifier.initialize();
   }
 
   @Override

@@ -88,14 +88,15 @@ public class CachingCVB0Mapper
 /*          context.getConfiguration().getClass(SparsifyingVectorSumReducer.SPARSIFIER_CLASS,
                                              NoopVectorSparsifier.class,
                                              VectorSparsifier.class); */
-      BackgroundFrequencyVectorSparsifier bfvs = new BackgroundFrequencyVectorSparsifier();
-      bfvs.setConf(conf);
-      bfvs.setSparsifiedCounter(context.getCounter(CVB0Driver.Counters.COMPLETELY_SPARSIFIED_FEATURES));
-      sparsifier = bfvs;
+      //BackgroundFrequencyVectorSparsifier bfvs = new BackgroundFrequencyVectorSparsifier();
+      //bfvs.setConf(conf);
+      //bfvs.initialize();
+      //bfvs.setSparsifiedCounter(context.getCounter(CVB0Driver.Counters.COMPLETELY_SPARSIFIED_FEATURES));
+      sparsifier = new NoopVectorSparsifier();
     }
 
     log.info("Initializing read model");
-    TopicModel readModel;
+    TopicModelBase readModel;
     Path[] modelPaths = CVB0Driver.getModelPaths(conf);
 
     if(modelPaths != null && modelPaths.length > 0) {
@@ -114,7 +115,7 @@ public class CachingCVB0Mapper
         // TODO: subtract previousTtc * numShards from current to get just the updates.
       }
       
-      readModel = new TopicModel(modelMatrix, eta, alpha, null, numUpdateThreads, modelWeight);
+      readModel = new TopicModel(modelMatrix, eta, alpha, numUpdateThreads, modelWeight);
     } else {
       log.info("No model files found");
       throw new IOException("No model files found, must pre-initialize model somehow");
@@ -122,8 +123,8 @@ public class CachingCVB0Mapper
 
     log.info("Initializing write model");
     // TODO: using "modelWeight == 1" as the switch here is BAD. Online LDA with modelWeight 1 is ok
-    TopicModel writeModel = modelWeight == 1
-        ? new TopicModel(numTopics, numTerms, eta, alpha, null, numUpdateThreads, 1)
+    TopicModelBase writeModel = modelWeight == 1
+        ? new TopicModel(numTopics, numTerms, eta, alpha, numUpdateThreads, 1)
         : readModel;
 
     log.info("Initializing model trainer");
@@ -134,9 +135,10 @@ public class CachingCVB0Mapper
   @Override
   public void map(IntWritable docId, VectorWritable document, Context context)
       throws IOException, InterruptedException {
-    context.getCounter(CVB0Driver.Counters.SAMPLED_DOCUMENTS).increment(1);
+    context.getCounter(CVB0Driver.Counters.SAMPLED_DOCUMENTS).increment(1); // TODO: rename me
     Vector topicVector = new DenseVector(new double[numTopics]).assign(1.0 / numTopics);
-    modelTrainer.train(document.get(), topicVector, true, maxIters);
+    //TODO i don't trust the threading here anymore.  should remove it.
+    modelTrainer.trainSync(document.get(), topicVector, true, maxIters);
   }
 
   @Override

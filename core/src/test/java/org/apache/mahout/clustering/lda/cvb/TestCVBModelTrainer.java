@@ -16,8 +16,11 @@
  */
 package org.apache.mahout.clustering.lda.cvb;
 
+import com.google.common.base.Charsets;
 import com.google.common.base.Joiner;
 import com.google.common.collect.Lists;
+import com.google.common.io.Files;
+
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
@@ -36,6 +39,7 @@ import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
@@ -91,7 +95,12 @@ public class TestCVBModelTrainer extends MahoutTestCase {
       }
       collectionFrequencies.set(feature, fCf);
     }
-    MatrixUtils.write(sampleCorpusCollectionFrequencyPath, conf, collectionFrequencies);
+    File cfFile = new File(sampleCorpusCollectionFrequencyPath.toUri());
+    cfFile.delete();
+    cfFile.createNewFile();
+    for(int i = 0; i < collectionFrequencies.size(); i++) {
+      Files.append("" + i + "\t" + collectionFrequencies.get(i), cfFile, Charsets.UTF_8);
+    }
   }
 
   @Test
@@ -157,7 +166,11 @@ public class TestCVBModelTrainer extends MahoutTestCase {
       Configuration conf = new Configuration();
       cvbConfig.setModelTempPath(topicModelStateTempPath).setNumTopics(numTestTopics);
       CVB0Driver.run(conf, cvbConfig);
-      perplexities.add(lowestPerplexity(conf, topicModelStateTempPath));
+      Pair<Integer, Double> lowestPerplexity = lowestPerplexity(conf, topicModelStateTempPath);
+      int bestIter = lowestPerplexity.getFirst();
+      assertTrue("Iteration with lowest perplexity should not be this early: " + bestIter,
+                  bestIter > cvbConfig.getMaxIterations() / 2);
+      perplexities.add(lowestPerplexity.getSecond());
       numTestTopics++;
     }
     int bestTopic = -1;
@@ -242,14 +255,18 @@ public class TestCVBModelTrainer extends MahoutTestCase {
           .setDocTopicPriorPath(priorPath)
           .setNumUpdateThreads(1).setIterationBlockSize(1).setOutputPath(outputPath);
     CVB0Driver.run(conf, cvbConfig);
-    double perplexity = lowestPerplexity(conf, topicModelStateTempPath);
+    Pair<Integer, Double> lowestPerplexity = lowestPerplexity(conf, topicModelStateTempPath);
+    double perplexity = lowestPerplexity.getSecond();
+    int bestIteration = lowestPerplexity.getFirst();
+    assertTrue("Lowest perplexity should not be this early in iterations: " + bestIteration,
+               bestIteration > numIterations / 2);
     System.out.println("Perplexity: " + perplexity);
     List<Path> modelParts = Lists.newArrayList();
     Path p = new Path(topicModelStateTempPath, "model-" + numIterations);
     for(FileStatus fileStatus : p.getFileSystem(conf).listStatus(p, PathFilters.partFilter())) {
       modelParts.add(fileStatus.getPath());
     }
-    Pair<Matrix, Vector> model = TopicModel.loadModel(conf, modelParts.toArray(new Path[0]));
+    Pair<Matrix, Vector> model = TopicModelBase.loadModel(conf, modelParts.toArray(new Path[0]));
     for(int topic = 0; topic < numTopics; topic++) {
       Vector topicDist = model.getFirst().viewRow(topic);
       int term = mostProminentFeature(topicDist);
@@ -282,16 +299,20 @@ public class TestCVBModelTrainer extends MahoutTestCase {
     return term;
   }
 
-  private static double lowestPerplexity(Configuration conf, Path topicModelTemp)
+  private static Pair<Integer, Double> lowestPerplexity(Configuration conf, Path topicModelTemp)
       throws IOException {
     double lowest = Double.MAX_VALUE;
     double current;
     int iteration = 2;
+    int bestIteration = -1;
     while(!Double.isNaN(current = CVB0Driver.readPerplexity(conf, topicModelTemp, iteration))) {
-      lowest = Math.min(current, lowest);
+      if(current < lowest) {
+        bestIteration = iteration;
+        lowest = current;
+      }
       iteration++;
     }
-    return lowest;
+    return Pair.of(bestIteration, lowest);
   }
 
 }

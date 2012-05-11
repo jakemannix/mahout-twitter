@@ -14,4 +14,9 @@ public class NoopVectorSparsifier extends Configured implements  VectorSparsifie
   public Matrix rebalance(Matrix input) {
     return input;
   }
+
+  @Override
+  public void initialize() {
+    // No-op.
+  }
 }

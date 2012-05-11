@@ -21,6 +21,8 @@ import com.google.common.collect.Maps;
 import org.apache.hadoop.fs.Path;
 import org.apache.mahout.math.Matrix;
 import org.apache.mahout.math.MatrixSlice;
+import org.apache.mahout.math.RandomAccessSparseVector;
+import org.apache.mahout.math.SparseColumnMatrix;
 import org.apache.mahout.math.SparseRowMatrix;
 import org.apache.mahout.math.Vector;
 import org.apache.mahout.math.VectorIterable;
@@ -87,7 +89,7 @@ public class ModelTrainer {
    * @param numTopics
    * @param numTerms
    */
-  public ModelTrainer(TopicModel model, int numTrainThreads, int numTopics, int numTerms) {
+  public ModelTrainer(TopicModelBase model, int numTrainThreads, int numTopics, int numTerms) {
     this(model, model, numTrainThreads, numTopics, numTerms);
   }
 
@@ -266,7 +268,9 @@ public class ModelTrainer {
       this.readModel = readModel;
       this.writeModel = writeModel;
       this.state = new DocTrainingState().setDocument(document).setDocTopics(docTopics);
-      state.setDocTopicModel(new SparseRowMatrix(docTopics.size(), document.size(), true));
+      RandomAccessSparseVector[] docTopicModel = new RandomAccessSparseVector[document.size()];
+      state.setDocTopicModel(new SparseColumnMatrix(docTopics.size(), document.size(),
+                                                    docTopicModel, true));
       this.numDocTopicIters = numDocTopicIters;
     }
 

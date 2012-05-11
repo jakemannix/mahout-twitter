@@ -24,6 +24,11 @@ package org.apache.mahout.math;
 public class SparseColumnMatrix extends AbstractMatrix {
   private Vector[] columnVectors;
 
+
+  public SparseColumnMatrix(int rows, int columns, RandomAccessSparseVector[] columnVectors) {
+    this(rows, columns, columnVectors, false);
+  }
+
   /**
    * Construct a matrix of the given cardinality with the given data columns
    *
@@ -31,11 +36,14 @@ public class SparseColumnMatrix extends AbstractMatrix {
    * @param columns     a RandomAccessSparseVector[] array of columns
    * @param columnVectors
    */
-  public SparseColumnMatrix(int rows, int columns, RandomAccessSparseVector[] columnVectors) {
+  public SparseColumnMatrix(int rows, int columns,
+                            RandomAccessSparseVector[] columnVectors, boolean shallowCopy) {
     super(rows, columns);
-    this.columnVectors = this.columnVectors.clone();
-    for (int col = 0; col < columnSize(); col++) {
-      this.columnVectors[col] = this.columnVectors[col].clone();
+    this.columnVectors = shallowCopy ? columnVectors : columnVectors.clone();
+    if(!shallowCopy) {
+      for (int col = 0; col < columnSize(); col++) {
+        this.columnVectors[col] = columnVectors[col] == null ? null : columnVectors[col].clone();
+      }
     }
   }
 
@@ -131,7 +139,11 @@ public class SparseColumnMatrix extends AbstractMatrix {
     if (column < 0 || column >= columnSize()) {
       throw new IndexException(column, columnSize());
     }
-    columnVectors[column].assign(other);
+    if (columnVectors[column] != null) {
+      columnVectors[column].assign(other);
+    } else {
+      columnVectors[column] = new RandomAccessSparseVector(other);
+    }
     return this;
   }
 

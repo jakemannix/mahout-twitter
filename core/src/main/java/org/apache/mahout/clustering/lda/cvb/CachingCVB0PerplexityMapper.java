@@ -63,23 +63,22 @@ public class CachingCVB0PerplexityMapper extends
     float modelWeight = config.getModelWeight();
 
     log.info("Initializing read model");
-    TopicModel readModel;
+    TopicModelBase readModel;
     Path[] modelPaths = CVB0Driver.getModelPaths(conf);
 
-    Class<? extends VectorSparsifier> sparsifierClass = BackgroundFrequencyVectorSparsifier.class;
+    Class<? extends VectorSparsifier> sparsifierClass = NoopVectorSparsifier.class;
 /*          context.getConfiguration().getClass(SparsifyingVectorSumReducer.SPARSIFIER_CLASS,
                                               NoopVectorSparsifier.class,
                                               VectorSparsifier.class); */
     sparsifier = ReflectionUtils.newInstance(sparsifierClass, context.getConfiguration());
     sparsifier.setConf(conf);
+    sparsifier.initialize();
 
     if(modelPaths != null && modelPaths.length > 0) {
       Pair<Matrix, Vector> matrix = TopicModelBase.loadModel(conf, modelPaths);
       Matrix modelMatrix = matrix.getFirst();
-      if (sparsifier != null) {
-        modelMatrix = sparsifier.rebalance(modelMatrix);
-      }
-      readModel = new TopicModel(modelMatrix, eta, alpha, null, numUpdateThreads, modelWeight);
+      modelMatrix = sparsifier.rebalance(modelMatrix);
+      readModel = new TopicModel(modelMatrix, eta, alpha, numUpdateThreads, modelWeight);
     } else {
       log.info("No model files found");
       throw new IOException("No model files found when computing perplexity!?!");

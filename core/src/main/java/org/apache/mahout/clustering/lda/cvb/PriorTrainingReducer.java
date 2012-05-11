@@ -90,10 +90,10 @@ public class PriorTrainingReducer extends MapReduceBase
       onlyLabeledDocs = c.isUseOnlyLabeledDocs();
 
       log.info("Initializing read model");
-      TopicModel readModel;
+      TopicModelBase readModel;
       Path[] modelPaths = CVB0Driver.getModelPaths(conf);
       if(modelPaths != null && modelPaths.length > 0) {
-        readModel = new TopicModel(conf, eta, alpha, null, numUpdateThreads, modelWeight, modelPaths);
+        readModel = new TopicModel(conf, eta, alpha, numUpdateThreads, modelWeight, modelPaths);
       } else {
         Matrix m;
         Vector topicSums;
@@ -107,14 +107,14 @@ public class PriorTrainingReducer extends MapReduceBase
           m.assign(1.0 / numTerms);
           topicSums = new DenseVector(numTopics).assign(1.0);
         }
-        readModel = new TopicModel(m, topicSums, eta, alpha, null, numTrainThreads, modelWeight);
+        readModel = new TopicModel(m, topicSums, eta, alpha, numTrainThreads, modelWeight);
       }
 
       log.info("Initializing write model");
-      TopicModel writeModel = modelWeight == 1
+      TopicModelBase writeModel = modelWeight == 1
           ? new TopicModel(new DenseMatrix(numTopics, numTerms),
                            new DenseVector(numTopics),
-                           eta, alpha, null, numUpdateThreads, 1.0)
+                           eta, alpha, numUpdateThreads, 1.0)
           : readModel;
 
       log.info("Initializing model trainer");
