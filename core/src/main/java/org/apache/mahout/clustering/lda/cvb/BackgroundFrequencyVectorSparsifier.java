@@ -7,6 +7,8 @@ import com.google.common.base.Preconditions;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
+import org.apache.hadoop.fs.FileStatus;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.IntWritable;
@@ -14,6 +16,7 @@ import org.apache.hadoop.mapreduce.Counter;
 import org.apache.mahout.common.HadoopUtil;
 import org.apache.mahout.common.Pair;
 import org.apache.mahout.common.iterator.FileLineIterable;
+import org.apache.mahout.common.iterator.sequencefile.PathFilters;
 import org.apache.mahout.common.iterator.sequencefile.SequenceFileIterable;
 import org.apache.mahout.math.DenseVector;
 import org.apache.mahout.math.Matrix;
@@ -62,17 +65,20 @@ public class BackgroundFrequencyVectorSparsifier extends Configured implements V
     CVBConfig config = new CVBConfig().read(conf);
     minCfRatio = config.getCfSparsificationThreshold();
     double[] collectionFrequencies = new double[config.getNumTerms()];
-    try {
-      Iterable<String> lines = new FileLineIterable(HadoopUtil.openStream(
-                                                    config.getCollectionFrequencyPath(), conf));
-      for (String line : lines) {
-        String[] split = line.split("\t");
-        int featureId = Integer.parseInt(split[0]);
-        double cf = Double.parseDouble(split[1]);
-        collectionFrequencies[featureId] = cf;
+
+    for (FileStatus stat : FileSystem.get(conf).globStatus(config.getCollectionFrequencyPath(),
+                                                           PathFilters.partFilter())) {
+      try {
+        Iterable<String> lines = new FileLineIterable(HadoopUtil.openStream(stat.getPath(), conf));
+        for (String line : lines) {
+          String[] split = line.split("\t");
+          int featureId = Integer.parseInt(split[0]);
+          double cf = Double.parseDouble(split[1]);
+          collectionFrequencies[featureId] = cf;
+        }
+      } catch (Exception e) {
+        throw new IOException("Could not configure VectorSparsifier", e);
       }
-    } catch (Exception e) {
-      throw new IOException("Could not configure VectorSparsifier", e);
     }
     setCollectionFrequencies(new DenseVector(collectionFrequencies));
   }
