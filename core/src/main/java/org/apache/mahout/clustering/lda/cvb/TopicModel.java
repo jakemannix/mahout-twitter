@@ -16,6 +16,7 @@
  */
 package org.apache.mahout.clustering.lda.cvb;
 
+import com.google.common.base.Function;
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 
@@ -117,16 +118,8 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
     initializeThreadPool();
   }
 
-  public Matrix getTopicTermCounts() {
+  public Matrix getTopicVectors() {
     return topicTermCounts;
-  }
-
-  public Vector getTopicSums() {
-    return topicSums;
-  }
-
-  public int getNumTerms() {
-    return numTerms;
   }
 
   private static Vector viewRowSums(Matrix m) {
@@ -184,7 +177,7 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
   }
 
   @Override
-  public void trainDocTopicModel(DocTrainingState state) {
+  public void trainDocTopicModelSingleIteration(DocTrainingState state) {
     Vector original = state.getDocument();
     Vector topics = state.getDocTopics();
     Matrix docTopicModel = state.getDocTopicModel();
@@ -198,8 +191,8 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
     Vector.Element e = null;
     while(it.hasNext() && (e = it.next())!= null && e.index() < numTerms) { // protect vs. big docs
       for(int x = 0; x < numTopics; x++) {
-        Vector docTopicModelRow = docTopicModel.viewRow(x);
-        docTopicModelRow.setQuick(e.index(), docTopicModelRow.getQuick(e.index()) * e.get());
+        Vector docTopicModelColumn = docTopicModel.viewColumn(x);
+        docTopicModelColumn.setQuick(e.index(), docTopicModelColumn.getQuick(e.index()) * e.get());
       }
     }
     // now recalculate p(topic|doc) by summing contributions from all of pTopicGivenTerm
@@ -208,7 +201,7 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
       it = original.iterateNonZero();
       double norm = 0;
       while(it.hasNext() && (e = it.next())!= null && e.index() < numTerms) {
-        norm += docTopicModel.get(x, e.index());
+        norm += docTopicModel.get(e.index(), x);
       }
       topics.set(x, norm);
     }
@@ -258,7 +251,7 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
   @Override
   public void update(DocTrainingState state) {
     for(int x = 0; x < numTopics; x++) {
-      updaters[x % updaters.length].update(x, state.getDocTopicModel().viewRow(x));
+      updaters[x % updaters.length].update(x, state.getDocTopicModel().viewColumn(x));
     }
   }
 
@@ -299,7 +292,7 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
       // get \sum_a w(term a | topic x)
       double topicSum = topicSums.get(x);
       // get p(topic x | term a) distribution to update
-      Vector termTopicRow = termTopicDist.viewRow(x);
+      Vector termTopicRow = termTopicDist.viewColumn(x);
       // cache factor which is the same for all terms, for this fixed topic.
       double topicMult = (topicWeight + alpha) / (topicSum + eta * numTerms);
 
@@ -352,44 +345,12 @@ public class TopicModel extends TopicModelBase implements Iterable<MatrixSlice> 
       int a = e.index();
       double sum = 0;
       for(int x = 0; x < numTopics; x++) {
-        sum += perTopicSparseDistributions.get(x, a);
+        sum += perTopicSparseDistributions.get(a, x);
       }
       for(int x = 0; x < numTopics; x++) {
-        perTopicSparseDistributions.set(x, a, perTopicSparseDistributions.get(x, a) / sum);
+        perTopicSparseDistributions.set(a, x, perTopicSparseDistributions.get(a, x) / sum);
       }
     }
-  }
-
-  public static String vectorToSortedString(Vector vector, String[] dictionary) {
-    List<Pair<String,Double>> vectorValues =
-        new ArrayList<Pair<String, Double>>(vector.getNumNondefaultElements());
-    Iterator<Vector.Element> it = vector.iterateNonZero();
-    while(it.hasNext()) {
-      Vector.Element e = it.next();
-      vectorValues.add(Pair.of(dictionary != null ? dictionary[e.index()] : String.valueOf(e.index()),
-                               e.get()));
-    }
-    Collections.sort(vectorValues, new Comparator<Pair<String, Double>>() {
-      @Override public int compare(Pair<String, Double> x, Pair<String, Double> y) {
-        return y.getSecond().compareTo(x.getSecond());
-      }
-    });
-    Iterator<Pair<String,Double>> listIt = vectorValues.iterator();
-    StringBuilder bldr = new StringBuilder(2048);
-    bldr.append('{');
-    int i = 0;
-    while(listIt.hasNext() && i < 25) {
-      i++;
-      Pair<String,Double> p = listIt.next();
-      bldr.append(p.getFirst());
-      bldr.append(':');
-      bldr.append(p.getSecond());
-      bldr.append(',');
-    }
-    if(bldr.length() > 1) {
-      bldr.setCharAt(bldr.length() - 1, '}');
-    }
-    return bldr.toString();
   }
 
   private final class Updater implements Runnable {

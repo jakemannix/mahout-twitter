@@ -16,31 +16,27 @@
  */
 package org.apache.mahout.clustering.lda.cvb;
 
-import com.google.common.collect.Lists;
+import com.google.common.base.Function;
+import com.google.common.collect.AbstractIterator;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 
-import org.apache.hadoop.conf.Configurable;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.io.IntWritable;
 import org.apache.mahout.common.Pair;
 import org.apache.mahout.common.RandomUtils;
-import org.apache.mahout.common.iterator.sequencefile.SequenceFileIterable;
 import org.apache.mahout.math.*;
 import org.apache.mahout.math.function.Functions;
+import org.apache.mahout.math.list.IntArrayList;
 import org.apache.mahout.math.stats.Sampler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Random;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -58,7 +54,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class SparseTopicModel extends TopicModelBase implements Iterable<MatrixSlice> {
   private static final Logger log = LoggerFactory.getLogger(SparseTopicModel.class);
-  private final Matrix topicTermCounts;
+  private final SparseMatrix topicTermCounts;
   private final Vector topicSums;
   private final int numTerms;
   private final double eta;
@@ -75,7 +71,8 @@ public class SparseTopicModel extends TopicModelBase implements Iterable<MatrixS
 
   public SparseTopicModel(int numTopics, int numTerms, double eta, double alpha,
       int numThreads, double modelWeight) {
-    this(new DenseMatrix(numTopics, numTerms), new DenseVector(numTopics), eta, alpha,
+    this(new SparseMatrix(numTerms, numTopics),
+         new DenseVector(numTopics), eta, alpha,
         numThreads, modelWeight);
   }
 
@@ -84,23 +81,34 @@ public class SparseTopicModel extends TopicModelBase implements Iterable<MatrixS
     this(model.getFirst(), model.getSecond(), eta, alpha, numThreads, modelWeight);
   }
 
-  public SparseTopicModel(Matrix topicTermCounts, Vector topicSums, double eta, double alpha,
-    double modelWeight) {
-    this(topicTermCounts, topicSums, eta, alpha, 1, modelWeight);
-  }
-
   public SparseTopicModel(Matrix topicTermCounts, double eta, double alpha,
       int numThreads, double modelWeight) {
     this(topicTermCounts, viewRowSums(topicTermCounts),
-        eta, alpha, numThreads, modelWeight);
+            eta, alpha, numThreads, modelWeight);
   }
 
   public SparseTopicModel(Matrix topicTermCounts, Vector topicSums, double eta, double alpha,
                     int numThreads, double modelWeight) {
     super(topicSums.size());
-    this.topicTermCounts = topicTermCounts;
+    if(topicTermCounts instanceof SparseMatrix && topicSums.size() == topicTermCounts.numCols()) {
+      this.topicTermCounts = (SparseMatrix)topicTermCounts;
+      numTerms = topicTermCounts.numRows();
+    } else {
+      numTerms = topicTermCounts.numRows() == numTopics ? topicTermCounts.numCols() : topicTermCounts.numRows();
+      this.topicTermCounts = new SparseMatrix(numTerms, numTopics);
+      if(topicSums.size() == topicTermCounts.rowSize()) {
+        for(int i=0; i<topicTermCounts.columnSize(); i++) {
+          this.topicTermCounts.assignRow(i,
+                                         new RandomAccessSparseVector(topicTermCounts.viewColumn(i)));
+        }
+      } else {
+        for(int i=0; i<topicTermCounts.rowSize(); i++) {
+          this.topicTermCounts.assignRow(i,
+                                         new RandomAccessSparseVector(topicTermCounts.viewRow(i)));
+        }
+      }
+    }
     this.topicSums = topicSums;
-    this.numTerms = topicTermCounts.numCols();
     this.eta = eta;
     this.alpha = alpha;
     this.sampler = new Sampler(RandomUtils.getRandom());
@@ -108,23 +116,45 @@ public class SparseTopicModel extends TopicModelBase implements Iterable<MatrixS
     this.updaters = new Updater[numThreads];
     if(modelWeight != 1) {
       topicSums.assign(Functions.mult(modelWeight));
-      for(int x = 0; x < numTopics; x++) {
+      for(int x : this.topicTermCounts.nonNullRowKeys().elements()) {
         topicTermCounts.viewRow(x).assign(Functions.mult(modelWeight));
       }
     }
     initializeThreadPool();
   }
 
-  public Matrix getTopicTermCounts() {
-    return topicTermCounts;
+  @Override
+  public Iterable<MatrixSlice> getTopicVectors() {
+    return this;
+  }
+  
+  @Override
+  public int getNumNonZeroes() {
+    return topicTermCounts.nonNullRowKeys().size() * numTopics;
   }
 
-  public Vector getTopicSums() {
-    return topicSums;
-  }
-
-  public int getNumTerms() {
-    return numTerms;
+  /**
+   *
+   * @return an Iterable over the non-null rows of the feature-by-topic (rows by columns) matrix
+   */
+  @Override
+  public Iterator<MatrixSlice> iterator() {
+    final IntArrayList features = topicTermCounts.nonNullRowKeys();
+    return new AbstractIterator<MatrixSlice>() {
+      int topicId = 0;
+      @Override
+      protected MatrixSlice computeNext() {
+        if(topicId < numTopics) {
+          RandomAccessSparseVector v = new RandomAccessSparseVector(numTerms, features.size());
+          for(int feature : features.elements()) {
+            v.setQuick(feature, topicTermCounts.viewRow(feature).get(topicId));
+          }
+          return new MatrixSlice(v, topicId++);
+        } else {
+          return endOfData();
+        }
+      }
+    };
   }
 
   private static Vector viewRowSums(Matrix m) {
@@ -147,11 +177,6 @@ public class SparseTopicModel extends TopicModelBase implements Iterable<MatrixS
     }
   }
 
-  @Override
-  public Iterator<MatrixSlice> iterator() {
-    return topicTermCounts.iterateAll();
-  }
-
   public int sampleTerm(Vector topicDistribution) {
     return sampler.sample(topicTermCounts.viewRow(sampler.sample(topicDistribution)));
   }
@@ -161,8 +186,8 @@ public class SparseTopicModel extends TopicModelBase implements Iterable<MatrixS
   }
 
   public void reset() {
-    for(int x = 0; x < numTopics; x++) {
-      topicTermCounts.assignRow(x, new SequentialAccessSparseVector(numTerms));
+    for(int x : topicTermCounts.getNumNondefaultElements()) {
+      topicTermCounts.assignRow(x, null);
     }
     topicSums.assign(1.0);
     initializeThreadPool();
@@ -174,18 +199,11 @@ public class SparseTopicModel extends TopicModelBase implements Iterable<MatrixS
     }
   }
 
-  public void renormalize() {
-    for(int x = 0; x < numTopics; x++) {
-      topicTermCounts.assignRow(x, topicTermCounts.viewRow(x).normalize(1));
-      topicSums.assign(1.0);
-    }
-  }
-
   @Override
-  public void trainDocTopicModel(DocTrainingState state) {
+  public void trainDocTopicModelSingleIteration(DocTrainingState state) {
     Vector original = state.getDocument();
     Vector topics = state.getDocTopics();
-    Matrix docTopicModel = state.getDocTopicModel();
+    SparseMatrix docTopicModel = state.getDocTopicModel();
     // first calculate p(topic|term,document) for all terms in original, and all topics,
     // using p(term|topic) and p(topic|doc)
     pTopicGivenTerm(original, topics, docTopicModel);
@@ -195,7 +213,7 @@ public class SparseTopicModel extends TopicModelBase implements Iterable<MatrixS
     Iterator<Vector.Element> it = original.iterateNonZero();
     Vector.Element e = null;
     while(it.hasNext() && (e = it.next())!= null && e.index() < numTerms) { // protect vs. big docs
-      docTopicModel.viewColumn(e.index()).assign(Functions.mult(e.get()));
+      docTopicModel.viewRow(e.index()).assign(Functions.mult(e.get()));
     }
     // now recalculate p(topic|doc) by summing contributions from all of pTopicGivenTerm
     topics.assign(0.0);
@@ -204,10 +222,10 @@ public class SparseTopicModel extends TopicModelBase implements Iterable<MatrixS
     while(it.hasNext()) {
       e = it.next();
       int feature = e.index();
-      Vector weightsForThisFeature = docTopicModel.viewColumn(feature);
-      Iterator<Vector.Element> weightIterator = weightsForThisFeature.iterateNonZero();
-      while(weightIterator.hasNext()) {
-        Vector.Element weightElement = weightIterator.next();
+      Vector weightsForThisFeature = docTopicModel.viewRow(feature);
+      Iterator<Vector.Element> topicIterator = weightsForThisFeature.iterateNonZero();
+      while(topicIterator.hasNext()) {
+        Vector.Element weightElement = topicIterator.next();
         int topic = weightElement.index();
         topics.set(topic, topics.get(topic) + weightElement.get());
       }
@@ -260,8 +278,11 @@ public class SparseTopicModel extends TopicModelBase implements Iterable<MatrixS
     Iterator<Vector.Element> it = state.getDocument().iterateNonZero();
     while(it.hasNext()) {
       int feature = it.next().index();
-      topicTermCounts.viewColumn(feature).assign(state.getDocTopicModel().viewColumn(feature),
-                                                    Functions.PLUS);
+      Vector topicTermColumn = topicTermCounts.viewRow(feature);
+      Vector docTopicTermColumn = state.getDocTopicModel().viewRow(feature);
+      topicTermColumn.assign(docTopicTermColumn, Functions.PLUS);
+//      topicTermCounts.viewColumn(feature).assign(state.getDocTopicModel().viewColumn(feature),
+//                                                    Functions.PLUS);
     }
   }
 
@@ -292,19 +313,13 @@ public class SparseTopicModel extends TopicModelBase implements Iterable<MatrixS
    *          document. If {@code null}, a topic weight of {@code 1.0} is used for all topics.
    * @param termTopicDist storage for output {@code p(x|a,i)} distributions.
    */
-  private void pTopicGivenTerm(Vector document, Vector docTopics, Matrix termTopicDist) {
+  private void pTopicGivenTerm(Vector document, Vector docTopics, SparseMatrix termTopicDist) {
     Iterator<Vector.Element> it1 = document.iterateNonZero();
     Vector.Element e1 = null;
     while(it1.hasNext() && (e1 = it1.next()) != null && e1.index() < numTerms) {
       int featureId = e1.index();
-      Vector termTopicOutputColumn = termTopicDist.viewColumn(featureId);
-      if (termTopicOutputColumn == null) {
-        termTopicOutputColumn = new RandomAccessSparseVector(docTopics.size());
-        termTopicDist.assignColumn(featureId, termTopicOutputColumn);
-        termTopicOutputColumn = termTopicDist.viewColumn(featureId);
-      }
-      Vector topicColumn = topicTermCounts.viewColumn(featureId);
-      // TODO: check if null?  could be, maybe?
+      Vector termTopicOutputColumn = termTopicDist.viewRow(featureId);
+      Vector topicColumn = topicTermCounts.viewRow(featureId);
       Iterator<Vector.Element> topIter = topicColumn.iterateNonZero();
       while(topIter.hasNext()) {
         Vector.Element topicTermCountElement = topIter.next();
@@ -357,7 +372,7 @@ public class SparseTopicModel extends TopicModelBase implements Iterable<MatrixS
     while(it.hasNext() && (e = it.next()) != null && e.index() < numTerms) {
       int term = e.index();
       double prob = 0;
-      Vector topicTermColumn = topicTermCounts.viewColumn(term);
+      Vector topicTermColumn = topicTermCounts.viewRow(term);
       Iterator<Vector.Element> ttIt = topicTermColumn.iterateNonZero();
       Vector.Element modelElement = null;
       while(ttIt.hasNext()) {
@@ -376,49 +391,17 @@ public class SparseTopicModel extends TopicModelBase implements Iterable<MatrixS
   /**
    *
    * @param doc just here to provide a sparse iterator
-   * @param perTopicSparseDistributions
+   * @param perFeatureTopicCounts
    */
-  private void normalizeByTopic(Vector doc, Matrix perTopicSparseDistributions) {
+  private void normalizeByTopic(Vector doc, SparseMatrix perFeatureTopicCounts) {
     Iterator<Vector.Element> it = doc.iterateNonZero();
     // then make sure that each of these is properly normalized by topic: sum_x(p(x|t,d)) = 1
     while(it.hasNext()) {
       Vector.Element e = it.next();
       int a = e.index();
-      double sum = perTopicSparseDistributions.viewColumn(a).norm(1);
-      perTopicSparseDistributions.viewColumn(a).assign(Functions.div(1.0 / sum));
+      double sum = perFeatureTopicCounts.viewRow(a).norm(1);
+      perFeatureTopicCounts.viewRow(a).assign(Functions.mult(1.0 / sum));
     }
-  }
-
-  public static String vectorToSortedString(Vector vector, String[] dictionary) {
-    List<Pair<String,Double>> vectorValues =
-        new ArrayList<Pair<String, Double>>(vector.getNumNondefaultElements());
-    Iterator<Vector.Element> it = vector.iterateNonZero();
-    while(it.hasNext()) {
-      Vector.Element e = it.next();
-      vectorValues.add(Pair.of(dictionary != null ? dictionary[e.index()] : String.valueOf(e.index()),
-                               e.get()));
-    }
-    Collections.sort(vectorValues, new Comparator<Pair<String, Double>>() {
-      @Override public int compare(Pair<String, Double> x, Pair<String, Double> y) {
-        return y.getSecond().compareTo(x.getSecond());
-      }
-    });
-    Iterator<Pair<String,Double>> listIt = vectorValues.iterator();
-    StringBuilder bldr = new StringBuilder(2048);
-    bldr.append('{');
-    int i = 0;
-    while(listIt.hasNext() && i < 25) {
-      i++;
-      Pair<String,Double> p = listIt.next();
-      bldr.append(p.getFirst());
-      bldr.append(':');
-      bldr.append(p.getSecond());
-      bldr.append(',');
-    }
-    if(bldr.length() > 1) {
-      bldr.setCharAt(bldr.length() - 1, '}');
-    }
-    return bldr.toString();
   }
 
   private final class Updater implements Runnable {

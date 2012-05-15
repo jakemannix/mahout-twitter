@@ -25,6 +25,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 import org.apache.mahout.clustering.ClusteringTestUtils;
+import org.apache.mahout.clustering.lda.LDASampler;
 import org.apache.mahout.common.MahoutTestCase;
 import org.apache.mahout.common.Pair;
 import org.apache.mahout.common.RandomUtils;
@@ -32,7 +33,9 @@ import org.apache.mahout.common.iterator.sequencefile.PathFilters;
 import org.apache.mahout.math.DenseMatrix;
 import org.apache.mahout.math.DenseVector;
 import org.apache.mahout.math.Matrix;
+import org.apache.mahout.math.MatrixSlice;
 import org.apache.mahout.math.MatrixUtils;
+import org.apache.mahout.math.RandomAccessSparseVector;
 import org.apache.mahout.math.Vector;
 import org.apache.mahout.math.function.DoubleFunction;
 import org.junit.Before;
@@ -43,6 +46,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Random;
 
 public class TestCVBModelTrainer extends MahoutTestCase {
 
@@ -199,6 +203,71 @@ public class TestCVBModelTrainer extends MahoutTestCase {
     int numIterations = 20;
     CVBConfig cvbConfig = defaultConfig().setPersistDocTopics(true).setMaxIterations(numIterations);
     runEndToEndMRTest(cvbConfig);
+  }
+
+  @Test
+  public void testIterationByIterationInference() throws Exception {
+    doTestIterationByIterationInference(new TopicModel(matrix, ETA, ALPHA, 1, 1.0));
+    doTestIterationByIterationInference(new SparseTopicModel(matrix, ETA, ALPHA, 1, 1.0));
+  }
+
+  @Test
+  public void testTrainingKeepsModelWeightConstant() throws Exception {
+    doTestTrainingKeepsModelWeightConstant(new TopicModel(matrix, ETA, ALPHA, 1, 1.0),
+                                           new TopicModel(matrix.numRows(), matrix.numCols(),
+                                                          ETA, ALPHA, 1, 1.0));
+    doTestTrainingKeepsModelWeightConstant(new SparseTopicModel(matrix, ETA, ALPHA, 1, 1.0),
+                                           new SparseTopicModel(matrix.numRows(), matrix.numCols(),
+                                                                ETA, ALPHA, 1, 1.0));
+  }
+
+  private void doTestTrainingKeepsModelWeightConstant(TopicModelBase readModel,
+                                                      TopicModelBase writeModel) throws Exception {
+    double corpusWeight = 0;
+    for(MatrixSlice slice : sampledCorpus) {
+      corpusWeight += slice.vector().norm(1);
+      DocTrainingState state = new DocTrainingState.Builder()
+                                   .setDocument(slice.vector())
+                                   .setMaxIters(30)
+                                   .setNumTopics(readModel.numTopics).build();
+      readModel.trainDocTopicModel(state);
+      writeModel.update(state);
+    }
+    double modelWeight = 0;
+    for(MatrixSlice slice : writeModel.getTopicVectors()) {
+      modelWeight += slice.vector().norm(1);
+    }
+    double relativeDiff = Math.abs(modelWeight - corpusWeight) / modelWeight;
+    assertTrue("Model should be same weight as the corpus: " + relativeDiff,
+               relativeDiff < 1e-6);
+  }
+
+  private void doTestIterationByIterationInference(TopicModelBase topicModel) throws Exception {
+    Vector document = new RandomAccessSparseVector(numTerms);
+    Random random = new Random(1234L);
+    LDASampler modelSampler = new LDASampler(matrix, random);
+    Vector genTopics = new DenseVector(matrix.numRows());
+    for(int i = 0; i < 3; i++) {
+      int topic = random.nextInt(genTopics.size());
+      genTopics.set(topic, genTopics.get(topic) + 1);
+    }
+    for(int sample : modelSampler.sample(genTopics, 5)) {
+      document.set(sample, document.get(sample) + 1);
+    }
+    
+    DocTrainingState state = new DocTrainingState.Builder().setDocument(document)
+                                                           .setNumTopics(numGeneratingTopics)
+                                                           .setMaxIters(1)
+                                                           .build();
+    Vector docTopics = new DenseVector(state.getDocTopics());
+    int iter = 0;
+    while(iter++ < 10) {
+      topicModel.trainDocTopicModel(state);
+      Vector nextDocTopics = new DenseVector(state.getDocTopics());
+      assertTrue("failed to get closer on iteration: " + iter,
+                 genTopics.minus(nextDocTopics).norm(1) < genTopics.minus(docTopics).norm(1));
+      docTopics = nextDocTopics;
+    }
   }
 
   @Test

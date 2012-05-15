@@ -86,7 +86,6 @@ public class InMemoryCollapsedVariationalBayes0 extends AbstractJob {
   private TopicModelBase updatedModel;
   private int numTrainingThreads;
   private int numUpdatingThreads;
-  private ModelTrainer modelTrainer;
 
   private InMemoryCollapsedVariationalBayes0() {
     // only for main usage
@@ -156,7 +155,6 @@ public class InMemoryCollapsedVariationalBayes0 extends AbstractJob {
     updatedModel.setConf(getConf());
     docTopicCounts = new DenseMatrix(numDocuments, numTopics);
     docTopicCounts.assign(1.0/numTopics);
-    modelTrainer = new ModelTrainer(topicModel, updatedModel, numTrainingThreads, numTopics, numTerms);
   }
 
   private void inferDocuments(double convergence, int maxIter, boolean recalculate) {
@@ -173,14 +171,18 @@ public class InMemoryCollapsedVariationalBayes0 extends AbstractJob {
 
   public void trainDocuments(double testFraction) {
     long start = System.nanoTime();
-    modelTrainer.start();
     for(int docId = 0; docId < corpusWeights.numRows(); docId++) {
       if(testFraction == 0 || docId % (1/testFraction) != 0) {
-        Vector docTopics = new DenseVector(numTopics).assign(1.0/numTopics); // docTopicCounts.getRow(docId)
-        modelTrainer.trainSync(corpusWeights.viewRow(docId), docTopics , true, 10);
+        DocTrainingState state = new DocTrainingState.Builder()
+                                     .setDocument(corpusWeights.viewRow(docId))
+                                     .setNumTopics(numTopics)
+                                     .setMaxIters(10).build();
+        topicModel.trainDocTopicModel(state);
+        updatedModel.update(state);
       }
     }
-    modelTrainer.stop();
+    topicModel = updatedModel;
+    updatedModel = new TopicModel(numTopics, numTerms, eta, alpha, numUpdatingThreads, 1);
     logTime("train documents", System.nanoTime() - start);
   }
 
@@ -220,12 +222,9 @@ public class InMemoryCollapsedVariationalBayes0 extends AbstractJob {
     double oldPerplexity = 0;
     while(iter < minIter) {
       trainDocuments(testFraction);
-      if(verbose) {
-        log.info("model after: " + iter + ": " + modelTrainer.getReadModel().toString());
-      }
       log.info("iteration " + iter + " complete");
-      oldPerplexity = modelTrainer.calculatePerplexity(corpusWeights, docTopicCounts,
-          testFraction);
+//      oldPerplexity = modelTrainer.calculatePerplexity(corpusWeights, docTopicCounts,
+//          testFraction);
       log.info(oldPerplexity + " = perplexity");
       iter++;
     }
@@ -233,11 +232,8 @@ public class InMemoryCollapsedVariationalBayes0 extends AbstractJob {
     double fractionalChange = Double.MAX_VALUE;
     while(iter < maxIterations && fractionalChange > minFractionalErrorChange) {
       trainDocuments();
-      if(verbose) {
-        log.info("model after: " + iter + ": " + modelTrainer.getReadModel().toString());
-      }
-      newPerplexity = modelTrainer.calculatePerplexity(corpusWeights, docTopicCounts,
-          testFraction);
+//      newPerplexity = modelTrainer.calculatePerplexity(corpusWeights, docTopicCounts,
+//          testFraction);
       log.info(newPerplexity + " = perplexity");
       iter++;
       fractionalChange = Math.abs(newPerplexity - oldPerplexity) / oldPerplexity;
@@ -255,7 +251,7 @@ public class InMemoryCollapsedVariationalBayes0 extends AbstractJob {
   }
 
   public void writeModel(Path outputPath) throws IOException {
-    modelTrainer.persist(outputPath);
+    topicModel.persist(outputPath, true);
   }
 
   private static void logTime(String label, long nanos) {

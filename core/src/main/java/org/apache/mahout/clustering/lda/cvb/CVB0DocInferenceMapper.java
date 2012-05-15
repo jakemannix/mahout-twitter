@@ -39,15 +39,10 @@ public class CVB0DocInferenceMapper extends CachingCVB0Mapper {
   @Override
   public void map(IntWritable docId, VectorWritable doc, Context context)
       throws IOException, InterruptedException {
-    Vector docTopics = modelTrainer.getReadModel()
-                                   .infer(new DocTrainingState().setDocument(doc.get()),
-                                          minRelPerplexityDiff, maxIterations);
+    DocTrainingState state = new DocTrainingState.Builder()
+                                 .setNumTopics(numTopics)
+                                 .setDocument(doc.get()).build();
+    Vector docTopics = readModel.infer(state, minRelPerplexityDiff, maxIterations);
     context.write(docId, new VectorWritable(docTopics));
-  }
-
-  @Override
-  protected void cleanup(Context context) {
-    log.info("Stopping model trainer");
-    modelTrainer.stop();
   }
 }

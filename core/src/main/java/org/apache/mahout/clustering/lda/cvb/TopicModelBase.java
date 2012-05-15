@@ -18,6 +18,7 @@ import org.apache.mahout.math.DenseMatrix;
 import org.apache.mahout.math.DenseVector;
 import org.apache.mahout.math.DistributedRowMatrixWriter;
 import org.apache.mahout.math.Matrix;
+import org.apache.mahout.math.MatrixSlice;
 import org.apache.mahout.math.Vector;
 import org.apache.mahout.math.VectorWritable;
 
@@ -25,11 +26,9 @@ public abstract class TopicModelBase implements Configurable {
 
   private Configuration conf;
   protected final int numTopics;
-  private final Vector uniform;
   
   protected TopicModelBase(int numTopics) {
     this.numTopics = numTopics;
-    uniform = new DenseVector(numTopics).assign(1.0 / numTopics);
   }
 
   @Override
@@ -45,16 +44,22 @@ public abstract class TopicModelBase implements Configurable {
   public final int getNumTopics() {
     return numTopics;
   }
-
-  public final Vector getUniform() {
-    return uniform;
-  }
   
   abstract public void update(DocTrainingState state);
 
   abstract public Vector infer(DocTrainingState state, double minRelPerplexityDiff, int maxIters);
 
-  abstract public void trainDocTopicModel(DocTrainingState state);
+  public int getNumNonZeroes() {
+    return 0;
+  }
+  
+  public void trainDocTopicModel(DocTrainingState state) {
+    for(int iter = 0; iter < state.getMaxIters(); iter++) {
+      trainDocTopicModelSingleIteration(state);
+    }
+  }
+
+  abstract protected void trainDocTopicModelSingleIteration(DocTrainingState state);
 
   abstract public double perplexity(Vector document, Vector docTopics);
 
@@ -66,7 +71,7 @@ public abstract class TopicModelBase implements Configurable {
     // NOOP
   }
   
-  abstract public Matrix getTopicTermCounts();
+  abstract public Iterable<MatrixSlice> getTopicVectors();
 
   abstract public Vector expectedTermCounts(Vector original, Vector docTopics);
 
@@ -75,7 +80,7 @@ public abstract class TopicModelBase implements Configurable {
     if(overwrite) {
       fs.delete(outputDir, true); // CHECK second arg
     }
-    DistributedRowMatrixWriter.write(outputDir, conf, getTopicTermCounts());
+    DistributedRowMatrixWriter.write(outputDir, conf, getTopicVectors());
   }
 
   public static Pair<Matrix, Vector> loadModel(Configuration conf, Path... modelPaths)

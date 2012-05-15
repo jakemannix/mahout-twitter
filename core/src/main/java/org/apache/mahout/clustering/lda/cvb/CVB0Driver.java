@@ -68,7 +68,7 @@ import java.util.List;
  * See {@link CachingCVB0Mapper} for more details on scalability and room for improvement.
  * To try out this LDA implementation without using Hadoop, check out
  * {@link InMemoryCollapsedVariationalBayes0}.  If you want to do training directly in java code
- * with your own main(), then look to {@link ModelTrainer} and {@link TopicModel}.
+ * with your own main(), then look to {@link TopicModel}.
  *
  * Usage: {@code ./bin/mahout cvb <i>options</i>}
  * <p>
@@ -272,15 +272,15 @@ public class CVB0Driver extends AbstractJob {
      int currentIteration = getCurrentIterationNumber(conf, c.getModelTempPath(), c.getMaxIterations());
      c.setCurrentIteration(currentIteration);
 
+     log.info("Current iteration number: {}", currentIteration);
+     c.write(conf);
+
      // if it's the first iteration, and there are no document priors, then write the initial
      // randomized model to HDFS for use in all the first iteration mappers.
      // TODO: may require sparsification!
      if(currentIteration == 1) {
        writeInitialTopicModel(conf, c, modelPath(c.getModelTempPath(), 0));
      }
-
-     log.info("Current iteration number: {}", currentIteration);
-     c.write(conf);
 
      // load (and optionally back-fill) perplexity values for previous iterations
      FileSystem fs = FileSystem.get(c.getModelTempPath().toUri(), conf);
@@ -355,12 +355,25 @@ public class CVB0Driver extends AbstractJob {
   }
 
   private static void writeInitialTopicModel(Configuration conf, CVBConfig c, Path path)
-      throws IOException {
+      throws IOException, ClassNotFoundException, InterruptedException {
     // make sure this is not RAM intensive even at scale for numTopics && numTerms
     // generate each vector sparsely
-    Matrix initialModel = TopicModelBase.randomMatrix(c.getNumTopics(), c.getNumTerms(),
-                                                      RandomUtils.getRandom(1234L)).getFirst();
-    MatrixUtils.write(new Path(path, "part-r-00000"), conf, initialModel);
+    String jobName = String.format("Writing initial topic model to %s by sampling sparsely from %s", 
+                                    path, c.getInputPath());
+    log.info("About to run: " + jobName);
+    Job job = new Job(conf, jobName);
+    job.setMapperClass(IntHashMapper.class);
+    job.setReducerClass(PickFirstReducer.class);
+    job.setNumReduceTasks(c.getNumTopics());
+    job.setInputFormatClass(SequenceFileInputFormat.class);
+    job.setOutputFormatClass(SequenceFileOutputFormat.class);
+    job.setOutputKeyClass(IntWritable.class);
+    job.setOutputValueClass(VectorWritable.class);
+
+    FileInputFormat.addInputPath(job, c.getInputPath());
+    FileOutputFormat.setOutputPath(job, path);
+    job.setJarByClass(CVB0Driver.class);
+    job.waitForCompletion(true);
   }
 
   private static double rateOfChange(List<Double> perplexities) {
@@ -775,6 +788,32 @@ public class CVB0Driver extends AbstractJob {
 
     @Override public void configure(JobConf jobConf) {
       // do nothing
+    }
+  }
+  
+  public static final class IntHashMapper
+      extends Mapper<IntWritable, VectorWritable, IntWritable, VectorWritable> {
+    private int numTopics;
+    @Override
+    protected void setup(Context context) throws IOException, InterruptedException {
+      CVBConfig config = new CVBConfig().read(context.getConfiguration());
+      numTopics = config.getNumTopics();
+    }
+    
+    @Override
+    public void map(IntWritable key, VectorWritable value, Context context)
+        throws IOException, InterruptedException {
+      key.set(key.get() % numTopics);
+      context.write(key, value);
+    }
+  }
+
+  public static class PickFirstReducer
+      extends Reducer<IntWritable, VectorWritable, IntWritable, VectorWritable> {
+    @Override
+    public void reduce(IntWritable key, Iterable<VectorWritable> values, Context context)
+        throws IOException, InterruptedException {
+      context.write(key, values.iterator().next());
     }
   }
 }

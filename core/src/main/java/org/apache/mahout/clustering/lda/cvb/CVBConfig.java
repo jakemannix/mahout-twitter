@@ -407,7 +407,7 @@ public class CVBConfig {
   public void check() {
    // initially will be NaN, but should be set positive after perplexity has been checked.
    // checkPositive(CURRENT_MODEL_WEIGHT, currentModelWeight);
-    checkPositive(CURRENT_ITERATION_PARAM, currentIteration);
+    checkGreaterOrEqual(CURRENT_ITERATION_PARAM, currentIteration, 0);
     checkPositive(NUM_TOPICS_PARAM, numTopics);
     checkPositive(NUM_TERMS_PARAM, numTerms);
     checkGreater(NUM_TERMS_PARAM, numTerms, numTopics);

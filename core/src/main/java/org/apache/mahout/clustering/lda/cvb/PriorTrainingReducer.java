@@ -25,8 +25,6 @@ import org.apache.hadoop.mapred.Reducer;
 import org.apache.hadoop.mapred.Reporter;
 import org.apache.hadoop.mapred.lib.MultipleOutputs;
 import org.apache.hadoop.mapreduce.Counter;
-import org.apache.mahout.common.Pair;
-import org.apache.mahout.common.RandomUtils;
 import org.apache.mahout.math.DenseMatrix;
 import org.apache.mahout.math.DenseVector;
 import org.apache.mahout.math.Matrix;
@@ -53,17 +51,14 @@ public class PriorTrainingReducer extends MapReduceBase
 
   public static final String DOC_TOPICS = "docTopics";
   public static final String TOPIC_TERMS = "topicTerms";
-  private ModelTrainer modelTrainer;
   private int maxIters;
   private int numTopics;
   private int numTerms;
   private boolean onlyLabeledDocs;
   private MultipleOutputs multipleOutputs;
   private Reporter reporter;
-
-  protected ModelTrainer getModelTrainer() {
-    return modelTrainer;
-  }
+  private TopicModelBase readModel;
+  private TopicModelBase writeModel;
 
   protected int getMaxIters() {
     return maxIters;
@@ -90,7 +85,6 @@ public class PriorTrainingReducer extends MapReduceBase
       onlyLabeledDocs = c.isUseOnlyLabeledDocs();
 
       log.info("Initializing read model");
-      TopicModelBase readModel;
       Path[] modelPaths = CVB0Driver.getModelPaths(conf);
       if(modelPaths != null && modelPaths.length > 0) {
         readModel = new TopicModel(conf, eta, alpha, numUpdateThreads, modelWeight, modelPaths);
@@ -111,15 +105,11 @@ public class PriorTrainingReducer extends MapReduceBase
       }
 
       log.info("Initializing write model");
-      TopicModelBase writeModel = modelWeight == 1
+      writeModel = modelWeight == 1
           ? new TopicModel(new DenseMatrix(numTopics, numTerms),
                            new DenseVector(numTopics),
                            eta, alpha, numUpdateThreads, 1.0)
           : readModel;
-
-      log.info("Initializing model trainer");
-      modelTrainer = new ModelTrainer(readModel, writeModel, numTrainThreads, numTopics, numTerms);
-      modelTrainer.start();
     } catch (IOException e) {
       throw new RuntimeException(e);
     }
@@ -171,21 +161,21 @@ public class PriorTrainingReducer extends MapReduceBase
         }
         reporter.getCounter(Counters.DOCS_WITH_PRIORS).increment(1);
       }
-      modelTrainer.trainSync(document, topicVector, true, 1);
+      DocTrainingState state = new DocTrainingState.Builder()
+                                   .setDocument(document)
+                                   .setDocTopics(topicVector).build();
+      readModel.trainDocTopicModel(state);
+      writeModel.update(state);
       multipleOutputs.getCollector(DOC_TOPICS, reporter)
-                     .collect(docId, new VectorWritable(topicVector));
+                     .collect(docId, new VectorWritable(state.getDocTopics()));
       reporter.getCounter(Counters.USED_DOCS).increment(1);
     }
   }
 
   @Override
   public void close() throws IOException {
-    log.info("Stopping model trainer");
-    modelTrainer.stop();
-
     log.info("Writing model");
-    TopicModelBase model = modelTrainer.getReadModel();
-    for(MatrixSlice topic : model.getTopicTermCounts()) {
+    for(MatrixSlice topic : writeModel.getTopicVectors()) {
       multipleOutputs.getCollector(TOPIC_TERMS, reporter)
                      .collect(new IntWritable(topic.index()), new VectorWritable(topic.vector()));
     }

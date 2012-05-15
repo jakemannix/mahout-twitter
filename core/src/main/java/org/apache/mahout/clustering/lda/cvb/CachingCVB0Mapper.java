@@ -18,16 +18,14 @@ package org.apache.mahout.clustering.lda.cvb;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.mapreduce.Mapper;
-import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.mahout.common.Pair;
-import org.apache.mahout.common.RandomUtils;
-import org.apache.mahout.common.iterator.sequencefile.SequenceFileIterable;
 import org.apache.mahout.math.DenseVector;
 import org.apache.mahout.math.Matrix;
 import org.apache.mahout.math.MatrixSlice;
+import org.apache.mahout.math.RandomAccessSparseVector;
+import org.apache.mahout.math.SparseColumnMatrix;
 import org.apache.mahout.math.Vector;
 import org.apache.mahout.math.VectorWritable;
 import org.slf4j.Logger;
@@ -36,10 +34,11 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.util.Random;
 
+import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 
 /**
- * Run ensemble learning via loading the {@link ModelTrainer} with two {@link TopicModel} instances:
+ * Run ensemble learning via loading the two {@link TopicModel} instances:
  * one from the previous iteration, the other empty.  Inference is done on the first, and the
  * learning updates are stored in the second, and only emitted at cleanup().
  *
@@ -56,15 +55,13 @@ import com.google.common.base.Preconditions;
  * corpus with the continually-improving p(topic|doc) matrix, and then emit multiple outputs
  * from the mappers to make sure we can do the reduce model averaging as well.  Tricky, but
  * possibly worth it.
- *
- * {@link ModelTrainer} already takes advantage (in maybe the not-nice way) of multi-core
- * availability by doing multithreaded learning, see that class for details.
  */
 public class CachingCVB0Mapper
     extends Mapper<IntWritable, VectorWritable, IntWritable, VectorWritable> {
   private static final Logger log = LoggerFactory.getLogger(CachingCVB0Mapper.class);
   protected CVBConfig config;
-  protected ModelTrainer modelTrainer;
+  protected TopicModelBase readModel;
+  protected TopicModelBase writeModel;
   protected int maxIters;
   protected int numTopics;
   protected VectorSparsifier sparsifier;
@@ -79,24 +76,21 @@ public class CachingCVB0Mapper
     numTopics = config.getNumTopics();
     int numTerms = config.getNumTerms();
     int numUpdateThreads = config.getNumUpdateThreads();
-    int numTrainThreads = config.getNumTrainThreads();
     maxIters = config.getMaxItersPerDoc();
     float modelWeight = config.getModelWeight();
 
     if (config.getCollectionFrequencyPath() != null) {
-      Class<? extends VectorSparsifier> sparsifierClass = BackgroundFrequencyVectorSparsifier.class;
+      Class<? extends VectorSparsifier> sparsifierClass = NoopVectorSparsifier.class;
 /*          context.getConfiguration().getClass(SparsifyingVectorSumReducer.SPARSIFIER_CLASS,
                                              NoopVectorSparsifier.class,
                                              VectorSparsifier.class); */
-      //BackgroundFrequencyVectorSparsifier bfvs = new BackgroundFrequencyVectorSparsifier();
-      //bfvs.setConf(conf);
-      //bfvs.initialize();
-      //bfvs.setSparsifiedCounter(context.getCounter(CVB0Driver.Counters.COMPLETELY_SPARSIFIED_FEATURES));
-      sparsifier = new NoopVectorSparsifier();
+      VectorSparsifier bfvs = new BackgroundFrequencyVectorSparsifier();
+      bfvs.setConf(conf);
+      bfvs.initialize();
+      sparsifier = bfvs;
     }
 
     log.info("Initializing read model");
-    TopicModelBase readModel;
     Path[] modelPaths = CVB0Driver.getModelPaths(conf);
 
     if(modelPaths != null && modelPaths.length > 0) {
@@ -115,7 +109,7 @@ public class CachingCVB0Mapper
         // TODO: subtract previousTtc * numShards from current to get just the updates.
       }
       
-      readModel = new TopicModel(modelMatrix, eta, alpha, numUpdateThreads, modelWeight);
+      readModel = new SparseTopicModel(modelMatrix, eta, alpha, numUpdateThreads, modelWeight);
     } else {
       log.info("No model files found");
       throw new IOException("No model files found, must pre-initialize model somehow");
@@ -123,33 +117,50 @@ public class CachingCVB0Mapper
 
     log.info("Initializing write model");
     // TODO: using "modelWeight == 1" as the switch here is BAD. Online LDA with modelWeight 1 is ok
-    TopicModelBase writeModel = modelWeight == 1
-        ? new TopicModel(numTopics, numTerms, eta, alpha, numUpdateThreads, 1)
+    writeModel = modelWeight == 1
+        ? new SparseTopicModel(numTopics, numTerms, eta, alpha, numUpdateThreads, 1)
         : readModel;
-
-    log.info("Initializing model trainer");
-    modelTrainer = new ModelTrainer(readModel, writeModel, numTrainThreads, numTopics, numTerms);
-    modelTrainer.start();
   }
 
   @Override
   public void map(IntWritable docId, VectorWritable document, Context context)
       throws IOException, InterruptedException {
     context.getCounter(CVB0Driver.Counters.SAMPLED_DOCUMENTS).increment(1); // TODO: rename me
-    Vector topicVector = new DenseVector(new double[numTopics]).assign(1.0 / numTopics);
-    //TODO i don't trust the threading here anymore.  should remove it.
-    modelTrainer.trainSync(document.get(), topicVector, true, maxIters);
+    DocTrainingState state = new DocTrainingState.Builder()
+                                 .setDocument(document.get())
+                                 .setNumTopics(numTopics)
+                                 .setMaxIters(maxIters).build();
+    readModel.trainDocTopicModel(state);
+//    for(int topic = 0; topic < numTopics; topic++) {
+//      context.write(new IntWritable(topic),
+//                    new VectorWritable(state.getDocTopicModel().viewColumn(topic)));
+//    }
+    writeModel.update(state);
+    if(shouldFlush(writeModel.getNumNonZeroes())) {
+      flush(context);
+    }
   }
 
   @Override
-  protected void cleanup(Context context) throws IOException, InterruptedException {
-    log.info("Stopping model trainer");
-    modelTrainer.stop();
-
+  protected void cleanup(final Context context) throws IOException, InterruptedException {
     log.info("Writing model");
-    TopicModelBase model = modelTrainer.getReadModel();
-    for(MatrixSlice topic : model.getTopicTermCounts()) {
+    flush(context);
+  }
+
+  private void flush(Context context) throws IOException, InterruptedException {
+    writeModel.awaitTermination();
+    for(MatrixSlice topic : writeModel.getTopicVectors()) {
       context.write(new IntWritable(topic.index()), new VectorWritable(topic.vector()));
     }
+    writeModel = new SparseTopicModel(numTopics, config.getNumTerms(),
+                                         config.getEta(), config.getAlpha(),
+                                         config.getNumUpdateThreads(), 1);
+  }
+
+  private boolean shouldFlush(int numCurrentNonZeroes) {
+    Runtime runtime = Runtime.getRuntime();
+    long freeMem = runtime.freeMemory();
+    long totalMem = runtime.totalMemory();
+    return freeMem / totalMem > 0.25;
   }
 }

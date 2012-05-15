@@ -66,18 +66,11 @@ public class SparseColumnMatrix extends AbstractMatrix {
     SparseColumnMatrix clone = (SparseColumnMatrix) super.clone();
     clone.columnVectors = new Vector[columnVectors.length];
     for (int i = 0; i < columnVectors.length; i++) {
-      clone.columnVectors[i] = columnVectors[i].clone();
+      if(columnVectors[i] != null) {
+        clone.columnVectors[i] = columnVectors[i].clone();
+      }
     }
     return clone;
-  }
-
-  /**
-   * Abstracted out for the iterator
-   * @return {@link #numCols()} 
-   */
-  @Override
-  public int numSlices() {
-    return numCols();
   }
 
   @Override
@@ -108,8 +101,7 @@ public class SparseColumnMatrix extends AbstractMatrix {
     int[] result = new int[2];
     result[COL] = columnVectors.length;
     for (int col = 0; col < columnSize(); col++) {
-      result[ROW] = Math.max(result[ROW], columnVectors[col]
-          .getNumNondefaultElements());
+      result[ROW] = Math.max(result[ROW], columnVectors[col].getNumNondefaultElements());
     }
     return result;
   }
@@ -166,6 +158,11 @@ public class SparseColumnMatrix extends AbstractMatrix {
     if (column < 0 || column >= columnSize()) {
       throw new IndexException(column, columnSize());
     }
-    return columnVectors[column];
+    Vector v = columnVectors[column];
+    if (v == null) {
+      columnVectors[column] = new RandomAccessSparseVector(numRows());
+      v = columnVectors[column];
+    }
+    return v;
   }
 }

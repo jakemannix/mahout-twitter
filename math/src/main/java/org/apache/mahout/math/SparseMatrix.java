@@ -53,6 +53,10 @@ public class SparseMatrix extends AbstractMatrix {
     this.rowVectors = new OpenIntObjectHashMap<Vector>();
   }
 
+  public IntArrayList nonNullRowKeys() {
+    return rowVectors.keys();
+  }
+
   @Override
   public Matrix clone() {
     SparseMatrix clone = (SparseMatrix) super.clone();
@@ -175,6 +179,7 @@ public class SparseMatrix extends AbstractMatrix {
     Vector res = rowVectors.get(row);
     if (res == null) {
       res = new RandomAccessSparseVector(columnSize());
+      rowVectors.put(row, res);
     }
     return res;
   }

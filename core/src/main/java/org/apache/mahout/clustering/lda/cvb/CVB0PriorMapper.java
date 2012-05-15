@@ -29,11 +29,8 @@ import org.apache.hadoop.mapred.jobcontrol.Job;
 import org.apache.hadoop.mapred.join.CompositeInputFormat;
 import org.apache.hadoop.mapred.join.TupleWritable;
 import org.apache.hadoop.mapred.lib.MultipleOutputs;
-import org.apache.mahout.common.RandomUtils;
 import org.apache.mahout.math.DenseVector;
-import org.apache.mahout.math.Matrix;
 import org.apache.mahout.math.MatrixSlice;
-import org.apache.mahout.math.SparseRowMatrix;
 import org.apache.mahout.math.VectorWritable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,8 +49,7 @@ public class CVB0PriorMapper extends MapReduceBase implements
   private float testFraction;
   private OutputCollector<IntWritable, VectorWritable> out;
   private int numTopics;
-
-  private ModelTrainer modelTrainer;
+  private TopicModelBase readModel;
 
   @Override
   public void configure(org.apache.hadoop.mapred.JobConf conf) {
@@ -68,7 +64,6 @@ public class CVB0PriorMapper extends MapReduceBase implements
     int numTrainThreads = c.getNumTrainThreads();
     double modelWeight = c.getModelWeight();
     log.info("Initializing read model");
-    TopicModelBase readModel;
     Path[] modelPaths = CVB0Driver.getModelPaths(conf);
     if(modelPaths != null && modelPaths.length > 0) {
       readModel = new TopicModel(conf, eta, alpha, numUpdateThreads, modelWeight, modelPaths);
@@ -78,7 +73,6 @@ public class CVB0PriorMapper extends MapReduceBase implements
     }
 
     log.info("Initializing model trainer");
-    modelTrainer = new ModelTrainer(readModel, null, numTrainThreads, numTopics, numTerms);
 
     } catch (IOException e) {
       throw new RuntimeException(e);
@@ -98,9 +92,10 @@ public class CVB0PriorMapper extends MapReduceBase implements
         ? (VectorWritable) tuple.get(1)
         : new VectorWritable(new DenseVector(numTopics).assign(1.0 / numTopics));
 
-    TopicModelBase model = modelTrainer.getReadModel();
-    DocTrainingState state = new DocTrainingState().setDocument(document.get())
-                                                   .setDocTopics(docTopicPrior.get());
+    TopicModelBase model = readModel;
+    DocTrainingState state = new DocTrainingState.Builder().setDocument(document.get())
+                                                           .setDocTopics(docTopicPrior.get())
+                                                           .build();
     // iterate one step on p(topic | doc)
     model.trainDocTopicModel(state);
     // update the model: NOTE - this is updating the current model, in place (i.e. online learning)
@@ -111,9 +106,8 @@ public class CVB0PriorMapper extends MapReduceBase implements
 
   @Override
   public void close() throws IOException {
-    modelTrainer.stop();
     // emit the model
-    for(MatrixSlice slice : modelTrainer.getReadModel().getTopicTermCounts()) {
+    for(MatrixSlice slice : readModel.getTopicVectors()) {
       out.collect(new IntWritable(slice.index()),
           new VectorWritable(slice.vector()));
     }

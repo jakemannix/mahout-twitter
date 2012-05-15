@@ -73,7 +73,7 @@ public abstract class AbstractMatrix implements Matrix {
 
   /**
    * Abstracted out for the iterator
-   * @return numRows() for row-based iterator, numColumns() for column-based.
+   * @return numRows()
    */
   @Override
   public int numSlices() {

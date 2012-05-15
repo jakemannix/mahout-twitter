@@ -20,6 +20,7 @@ import org.apache.mahout.math.Matrix;
 import org.apache.mahout.math.RandomAccessSparseVector;
 import org.apache.mahout.math.SequentialAccessSparseVector;
 import org.apache.mahout.math.SparseColumnMatrix;
+import org.apache.mahout.math.SparseMatrix;
 import org.apache.mahout.math.Vector;
 import org.apache.mahout.math.function.Functions;
 
@@ -27,7 +28,6 @@ public class BackgroundFrequencyVectorSparsifier extends Configured implements V
   private float minCfRatio = Float.NaN;
   private double[] collectionFrequencies = null;
   private double corpusWeight = -1;
-  private Counter completelySparsifiedFeatureCounter = null;
 
   public BackgroundFrequencyVectorSparsifier() {
   }
@@ -39,10 +39,6 @@ public class BackgroundFrequencyVectorSparsifier extends Configured implements V
   
   public BackgroundFrequencyVectorSparsifier(double[] collectionFrequencies, float minCfRatio) {
     this(new DenseVector(collectionFrequencies), minCfRatio);
-  }
-  
-  public void setSparsifiedCounter(Counter counter) {
-    this.completelySparsifiedFeatureCounter = counter;
   }
   
   private void setMinCfRatio(float minCfRatio) {
@@ -100,30 +96,26 @@ public class BackgroundFrequencyVectorSparsifier extends Configured implements V
   /**
    * take in SparseRowMatrix, spit out SparseColumnMatrix
    * @param modelMatrix which is a SparseRowMatrix, rows keyed on topicId
-   * @return rebalanced SparseColumnMatrix, with rows still keyed on topicId, with sparse *columns*
+   * @return rebalanced SparseMatrix, with sparse rows now keyed on featureId
    */
   @Override
   public Matrix rebalance(Matrix modelMatrix) {
     Preconditions.checkState(collectionFrequencies == null
                              || collectionFrequencies.length == modelMatrix.columnSize(),
                              "Collection frequency array not equal to feature width of the model!");
-    SparseColumnMatrix outputMatrix = new SparseColumnMatrix(modelMatrix.numRows(), 
-      modelMatrix.numCols(), new RandomAccessSparseVector[modelMatrix.numCols()], true);
+    SparseMatrix outputMatrix = new SparseMatrix(modelMatrix.numCols(),
+                                                 modelMatrix.numRows());
     for(int feature = 0; feature < collectionFrequencies.length; feature++) {
       double modelFeatureWeight = 0;
       double collectionFrequency = collectionFrequencies[feature];
       for(int topic = 0; topic < modelMatrix.rowSize(); topic++) {
         modelFeatureWeight += modelMatrix.get(topic, feature);
       }
-      Vector sparseOutputColumn = outputMatrix.viewColumn(feature);
-      if(sparseOutputColumn == null) {
-        sparseOutputColumn = new RandomAccessSparseVector(modelMatrix.numRows());
-        outputMatrix.assignColumn(feature, sparseOutputColumn);
-      }
+      Vector sparseOutputColumn = outputMatrix.viewRow(feature);
       if(modelFeatureWeight == 0) {
-        if(completelySparsifiedFeatureCounter != null) {
-          completelySparsifiedFeatureCounter.increment(1);
-        }
+  //      if(collector != null) {
+  //        collector.incrementCount(CVB0Driver.Counters.COMPLETELY_SPARSIFIED_FEATURES, 1);
+  //      }
         double flatCount = collectionFrequency / modelMatrix.numRows();
         for(int topic = 0; topic < modelMatrix.rowSize(); topic++) {
           sparseOutputColumn.set(topic, flatCount);

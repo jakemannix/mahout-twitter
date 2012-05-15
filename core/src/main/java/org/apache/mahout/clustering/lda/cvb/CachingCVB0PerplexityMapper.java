@@ -38,11 +38,10 @@ import java.util.Random;
 public class CachingCVB0PerplexityMapper extends
     Mapper<IntWritable, VectorWritable, DoubleWritable, DoubleWritable> {
   private static final Logger log = LoggerFactory.getLogger(CachingCVB0PerplexityMapper.class);
-  private ModelTrainer modelTrainer;
+  private TopicModelBase readModel;
   protected VectorSparsifier sparsifier;
   private int maxIters;
   private int numTopics;
-  private Vector topicVector;
   private final DoubleWritable outKey = new DoubleWritable();
   private final DoubleWritable outValue = new DoubleWritable();
 
@@ -56,17 +55,14 @@ public class CachingCVB0PerplexityMapper extends
     float eta = config.getEta();
     float alpha = config.getAlpha();
     numTopics = config.getNumTopics();
-    int numTerms = config.getNumTerms();
     int numUpdateThreads = config.getNumUpdateThreads();
-    int numTrainThreads = config.getNumTrainThreads();
     maxIters = config.getMaxItersPerDoc();
     float modelWeight = config.getModelWeight();
 
     log.info("Initializing read model");
-    TopicModelBase readModel;
     Path[] modelPaths = CVB0Driver.getModelPaths(conf);
 
-    Class<? extends VectorSparsifier> sparsifierClass = NoopVectorSparsifier.class;
+    Class<? extends VectorSparsifier> sparsifierClass = BackgroundFrequencyVectorSparsifier.class;
 /*          context.getConfiguration().getClass(SparsifyingVectorSumReducer.SPARSIFIER_CLASS,
                                               NoopVectorSparsifier.class,
                                               VectorSparsifier.class); */
@@ -78,17 +74,11 @@ public class CachingCVB0PerplexityMapper extends
       Pair<Matrix, Vector> matrix = TopicModelBase.loadModel(conf, modelPaths);
       Matrix modelMatrix = matrix.getFirst();
       modelMatrix = sparsifier.rebalance(modelMatrix);
-      readModel = new TopicModel(modelMatrix, eta, alpha, numUpdateThreads, modelWeight);
+      readModel = new SparseTopicModel(modelMatrix, eta, alpha, numUpdateThreads, modelWeight);
     } else {
       log.info("No model files found");
       throw new IOException("No model files found when computing perplexity!?!");
     }
-
-    log.info("Initializing model trainer");
-    modelTrainer = new ModelTrainer(readModel, null, numTrainThreads, numTopics, numTerms);
-
-    log.info("Initializing topic vector");
-    topicVector = new DenseVector(new double[numTopics]);
   }
 
   @Override
@@ -101,7 +91,11 @@ public class CachingCVB0PerplexityMapper extends
       throws IOException, InterruptedException{
     context.getCounter(CVB0Driver.Counters.SAMPLED_DOCUMENTS).increment(1);
     outKey.set(document.get().norm(1));
-    outValue.set(modelTrainer.calculatePerplexity(document.get(), topicVector.assign(1.0 / numTopics), maxIters));
+    DocTrainingState state = new DocTrainingState.Builder().setNumTopics(numTopics)
+                                                           .setDocument(document.get())
+                                                           .setMaxIters(maxIters).build();
+    readModel.trainDocTopicModel(state);
+    outValue.set(readModel.perplexity(state.getDocument(), state.getDocTopics()));
     context.write(outKey, outValue);
   }
 }
